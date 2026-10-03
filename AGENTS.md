@@ -1,0 +1,5 @@
+# Taxwire Account Manager World
+
+Use only this D: project for controlled source, dependencies, cache, build and evidence. Do not change global settings. Fictional educational content only; no personal learner background, real customer records, secrets or private employer material. Public disclaimer must remain visible. One pure engine serves the 3D world and workbench. Real tax conclusions require case-specific public authority and professional review; synthetic assumptions must be labeled. GitHub Pages release branch is main; unfinished work stays on development branches. Review staged files/history and generated build before every push. No paid integrations. Optional AI remains disabled.
+
+Integration owner owns application UI, configuration and releases. Content owns src/content except types.ts; engine owns src/engine and engine tests; world owns src/world. Communicate contract changes before editing another owner's files. Use project .local paths for caches and browser profiles. Do not copy the private build prompt into source.

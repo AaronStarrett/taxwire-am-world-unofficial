@@ -1,0 +1,355 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://example.invalid/taxwire-am-world/content-v1.schema.json",
+  "title": "Taxwire AM World authored content v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "competencies",
+    "accounts",
+    "contacts",
+    "sources",
+    "documents",
+    "missions",
+    "bootcamp",
+    "policies"
+  ],
+  "properties": {
+    "version": { "type": "string", "minLength": 1 },
+    "competencies": {
+      "type": "array",
+      "minItems": 24,
+      "items": { "$ref": "#/definitions/competency" }
+    },
+    "accounts": {
+      "type": "array",
+      "minItems": 12,
+      "items": { "$ref": "#/definitions/account" }
+    },
+    "contacts": {
+      "type": "array",
+      "minItems": 40,
+      "items": { "$ref": "#/definitions/contact" }
+    },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/source" }
+    },
+    "documents": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/document" }
+    },
+    "missions": {
+      "type": "array",
+      "minItems": 52,
+      "items": { "$ref": "#/definitions/mission" }
+    },
+    "bootcamp": {
+      "type": "array",
+      "minItems": 7,
+      "maxItems": 7,
+      "items": {
+        "type": "object",
+        "required": ["session", "title", "missionIds"],
+        "properties": {
+          "session": { "type": "integer", "minimum": 1, "maximum": 7 },
+          "title": { "type": "string" },
+          "missionIds": { "$ref": "#/definitions/strings" }
+        }
+      }
+    },
+    "policies": { "$ref": "#/definitions/strings" }
+  },
+  "definitions": {
+    "strings": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "text": { "type": "string", "minLength": 1 },
+    "scores": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tax",
+        "execution",
+        "communication",
+        "judgment",
+        "organization"
+      ],
+      "properties": {
+        "tax": { "type": "number", "minimum": 0, "maximum": 100 },
+        "execution": { "type": "number", "minimum": 0, "maximum": 100 },
+        "communication": { "type": "number", "minimum": 0, "maximum": 100 },
+        "judgment": { "type": "number", "minimum": 0, "maximum": 100 },
+        "organization": { "type": "number", "minimum": 0, "maximum": 100 }
+      }
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "id",
+        "title",
+        "url",
+        "jurisdiction",
+        "checkedAt",
+        "applicablePeriod",
+        "facts",
+        "uncertainty",
+        "status",
+        "summary"
+      ],
+      "properties": {
+        "id": { "$ref": "#/definitions/text" },
+        "title": { "$ref": "#/definitions/text" },
+        "url": { "type": "string", "pattern": "^https://" },
+        "jurisdiction": { "$ref": "#/definitions/text" },
+        "checkedAt": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+        "applicablePeriod": { "$ref": "#/definitions/text" },
+        "facts": { "$ref": "#/definitions/text" },
+        "uncertainty": { "$ref": "#/definitions/text" },
+        "status": {
+          "enum": [
+            "public_reference",
+            "needs_professional_review",
+            "fictional_policy"
+          ]
+        },
+        "summary": { "$ref": "#/definitions/text" }
+      }
+    },
+    "competency": {
+      "type": "object",
+      "required": [
+        "id",
+        "title",
+        "explanation",
+        "example",
+        "glossary",
+        "misconception",
+        "guidedPractice",
+        "independentPractice",
+        "rubric",
+        "sourceIds",
+        "workProduct"
+      ],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[TA](0[1-9]|1[0-2])$" },
+        "title": { "$ref": "#/definitions/text" },
+        "explanation": { "$ref": "#/definitions/text" },
+        "example": { "$ref": "#/definitions/text" },
+        "glossary": {
+          "type": "object",
+          "minProperties": 2,
+          "additionalProperties": { "$ref": "#/definitions/text" }
+        },
+        "misconception": { "$ref": "#/definitions/text" },
+        "guidedPractice": { "$ref": "#/definitions/text" },
+        "independentPractice": { "$ref": "#/definitions/text" },
+        "rubric": {
+          "type": "array",
+          "minItems": 3,
+          "items": { "$ref": "#/definitions/text" }
+        },
+        "sourceIds": { "$ref": "#/definitions/strings" },
+        "workProduct": { "$ref": "#/definitions/text" }
+      }
+    },
+    "account": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "business",
+        "entities",
+        "products",
+        "channels",
+        "systems",
+        "geography",
+        "priorities",
+        "renewalDay",
+        "annualValueMinor",
+        "currency",
+        "contacts",
+        "research"
+      ],
+      "properties": {
+        "id": { "$ref": "#/definitions/text" },
+        "name": { "$ref": "#/definitions/text" },
+        "business": { "$ref": "#/definitions/text" },
+        "entities": { "$ref": "#/definitions/strings" },
+        "products": { "$ref": "#/definitions/strings" },
+        "channels": { "$ref": "#/definitions/strings" },
+        "systems": { "$ref": "#/definitions/strings" },
+        "geography": { "$ref": "#/definitions/strings" },
+        "priorities": { "$ref": "#/definitions/strings" },
+        "renewalDay": { "type": "integer", "minimum": 1 },
+        "annualValueMinor": { "type": "integer", "minimum": 0 },
+        "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+        "contacts": { "$ref": "#/definitions/strings" },
+        "research": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["title", "body", "confidence"],
+            "properties": {
+              "title": { "$ref": "#/definitions/text" },
+              "body": { "$ref": "#/definitions/text" },
+              "confidence": { "enum": ["confirmed", "hypothesis", "question"] }
+            }
+          }
+        }
+      }
+    },
+    "contact": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "role",
+        "accountId",
+        "location",
+        "goals",
+        "knows",
+        "preference",
+        "authority",
+        "availability",
+        "color"
+      ],
+      "properties": {
+        "id": { "$ref": "#/definitions/text" },
+        "name": { "$ref": "#/definitions/text" },
+        "role": { "$ref": "#/definitions/text" },
+        "accountId": { "$ref": "#/definitions/text" },
+        "location": { "$ref": "#/definitions/text" },
+        "goals": { "$ref": "#/definitions/text" },
+        "knows": { "$ref": "#/definitions/strings" },
+        "preference": { "$ref": "#/definitions/text" },
+        "authority": { "$ref": "#/definitions/text" },
+        "availability": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "type": "integer", "minimum": 540, "maximum": 1020 }
+        },
+        "color": { "type": "string", "pattern": "^#[a-fA-F0-9]{6}$" }
+      }
+    },
+    "document": {
+      "type": "object",
+      "required": ["id", "title", "accountId", "kind", "body", "sourceIds"],
+      "properties": {
+        "id": { "$ref": "#/definitions/text" },
+        "title": { "$ref": "#/definitions/text" },
+        "accountId": { "$ref": "#/definitions/text" },
+        "kind": { "$ref": "#/definitions/text" },
+        "body": { "$ref": "#/definitions/text" },
+        "sourceIds": { "$ref": "#/definitions/strings" }
+      }
+    },
+    "choice": {
+      "type": "object",
+      "required": ["id", "label", "feedback", "scores"],
+      "properties": {
+        "id": { "$ref": "#/definitions/text" },
+        "label": { "$ref": "#/definitions/text" },
+        "feedback": { "$ref": "#/definitions/text" },
+        "scores": { "$ref": "#/definitions/scores" },
+        "criticalFailure": { "$ref": "#/definitions/text" },
+        "trustDelta": { "type": "number" },
+        "riskDelta": { "type": "number" },
+        "createsTask": { "$ref": "#/definitions/text" }
+      }
+    },
+    "step": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "title",
+        "instruction",
+        "duration",
+        "location",
+        "documentIds",
+        "sourceIds",
+        "choices"
+      ],
+      "properties": {
+        "id": { "$ref": "#/definitions/text" },
+        "kind": {
+          "enum": [
+            "research",
+            "meeting",
+            "calculation",
+            "investigate",
+            "coordinate",
+            "communicate",
+            "followup",
+            "review"
+          ]
+        },
+        "title": { "$ref": "#/definitions/text" },
+        "instruction": { "$ref": "#/definitions/text" },
+        "duration": { "type": "integer", "minimum": 1, "maximum": 480 },
+        "location": { "$ref": "#/definitions/text" },
+        "npcId": { "$ref": "#/definitions/text" },
+        "documentIds": { "$ref": "#/definitions/strings" },
+        "sourceIds": { "$ref": "#/definitions/strings" },
+        "choices": {
+          "type": "array",
+          "minItems": 2,
+          "items": { "$ref": "#/definitions/choice" }
+        },
+        "expectedValue": { "type": "integer" },
+        "tolerance": { "type": "number", "minimum": 0 },
+        "calculationLabel": { "$ref": "#/definitions/text" },
+        "workedExample": { "$ref": "#/definitions/text" },
+        "draftPrompt": { "$ref": "#/definitions/text" },
+        "modelAnswer": { "$ref": "#/definitions/text" },
+        "requiresEvidence": { "$ref": "#/definitions/strings" }
+      }
+    },
+    "mission": {
+      "type": "object",
+      "required": [
+        "id",
+        "version",
+        "title",
+        "competencyIds",
+        "accountId",
+        "stage",
+        "prerequisiteIds",
+        "briefing",
+        "facts",
+        "dueMinutes",
+        "fingerprint",
+        "steps",
+        "consequence",
+        "output"
+      ],
+      "properties": {
+        "id": { "$ref": "#/definitions/text" },
+        "version": { "type": "integer", "minimum": 1 },
+        "title": { "$ref": "#/definitions/text" },
+        "competencyIds": { "$ref": "#/definitions/strings" },
+        "accountId": { "$ref": "#/definitions/text" },
+        "stage": { "enum": ["core", "advanced", "capstone"] },
+        "prerequisiteIds": { "$ref": "#/definitions/strings" },
+        "briefing": { "$ref": "#/definitions/text" },
+        "facts": { "$ref": "#/definitions/strings" },
+        "dueMinutes": { "type": "integer", "minimum": 1 },
+        "fingerprint": { "$ref": "#/definitions/text" },
+        "steps": {
+          "type": "array",
+          "minItems": 4,
+          "items": { "$ref": "#/definitions/step" }
+        },
+        "consequence": { "$ref": "#/definitions/text" },
+        "output": { "$ref": "#/definitions/text" }
+      }
+    }
+  }
+}

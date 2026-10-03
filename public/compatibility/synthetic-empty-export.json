@@ -1,0 +1,12 @@
+{
+  "format": "taxwire-am-training",
+  "schemaVersion": 1,
+  "contentVersion": "synthetic-fixture-1",
+  "exportedAt": "2026-10-03T12:00:00.000Z",
+  "learner": { "id": "synthetic-empty", "displayName": "Synthetic Empty Profile" },
+  "competencies": [],
+  "missions": [],
+  "artifacts": [],
+  "reviewQueue": [],
+  "extensions": { "sourceEdition": "synthetic-fixture", "fixtureOnly": true }
+}

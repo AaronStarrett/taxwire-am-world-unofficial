@@ -1,0 +1,25 @@
+{
+  "format": "taxwire-am-training",
+  "schemaVersion": 1,
+  "contentVersion": "synthetic-academy-fixture-1",
+  "exportedAt": "2026-10-03T12:00:00.000Z",
+  "learner": { "id": "synthetic-learner", "displayName": "Synthetic Learner" },
+  "competencies": [
+    { "id": "T01", "level": "demonstrated", "bestScore": 85, "attemptCount": 2, "evidenceMissionIds": ["M-T01"] }
+  ],
+  "missions": [
+    { "id": "M-T01", "version": 1, "status": "completed", "bestScore": 85, "criticalFailures": [] }
+  ],
+  "artifacts": [
+    { "id": "synthetic-artifact-1", "type": "lifecycle-map", "missionId": "M-T01", "createdAt": "2026-10-03T11:00:00.000Z", "body": "Fictional evidence: responsibilities separated from collection, filing, payment, and review. Synthetic fixture, not a real Academy export." }
+  ],
+  "reviewQueue": [
+    { "competencyId": "T01", "dueAt": "2026-10-05T09:00:00.000Z", "reason": "Apply lifecycle ownership to a different synthetic case." }
+  ],
+  "extensions": {
+    "sourceEdition": "synthetic-academy-fixture",
+    "caseFingerprints": { "M-T01": "academy-distinct-case-v1" },
+    "fixtureOnly": true,
+    "futureField": { "retainThis": "unknown extension fields must survive transfer" }
+  }
+}
