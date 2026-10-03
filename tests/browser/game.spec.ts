@@ -15,10 +15,12 @@ test.beforeAll(async () => {
       headless: true,
       ...(process.platform === "win32" ? { channel: "chrome" } : {}),
       viewport: { width: 1280, height: 720 },
-      recordVideo: {
-        dir: resolve(".local/evidence/recordings"),
-        size: { width: 1280, height: 720 },
-      },
+      recordVideo: process.env.CI
+        ? undefined
+        : {
+            dir: resolve(".local/evidence/recordings"),
+            size: { width: 1280, height: 720 },
+          },
       acceptDownloads: true,
       downloadsPath: resolve(".local/exports"),
       args: [
@@ -90,11 +92,27 @@ test("movement, wall collision, drag camera, typing focus and meaningful desk in
     .locator("#world-shell")
     .getAttribute("data-clock");
   await page.keyboard.down("s");
-  await page.waitForTimeout(3500);
+  let previousPosition = "",
+    stableSamples = 0;
+  await expect
+    .poll(
+      async () => {
+        const position = (await page
+          .locator("#world-shell")
+          .getAttribute("data-position"))!;
+        stableSamples = position === previousPosition ? stableSamples + 1 : 0;
+        previousPosition = position;
+        // Walk from the apartment doorway to its far wall before testing sustained collision.
+        // Software-rendered runners advance fewer animation frames per wall-clock second.
+        return Number(position.split(",")[1]) > 27.2 && stableSamples >= 2;
+      },
+      { timeout: 30000, intervals: [750] },
+    )
+    .toBe(true);
   const wallPosition = await page
     .locator("#world-shell")
     .getAttribute("data-position");
-  await page.waitForTimeout(1500);
+  await page.waitForTimeout(1000);
   await page.keyboard.up("s");
   expect(await page.locator("#world-shell").getAttribute("data-position")).toBe(
     wallPosition,
