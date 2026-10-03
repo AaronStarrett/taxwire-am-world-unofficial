@@ -10,6 +10,7 @@ $env:TEMP = "$taskLocal\temp"
 $env:TMP = $env:TEMP
 $env:npm_config_cache = "$taskLocal\cache\npm"
 $env:PLAYWRIGHT_BROWSERS_PATH = "$taskLocal\browsers"
+$env:SITE_BASE_PATH = "/"
 $taskNode = Join-Path $taskLocal 'runtime\node.exe'
 if (-not (Test-Path -LiteralPath $taskNode)) {
   $taskBundled = Join-Path $env:USERPROFILE '.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe'
@@ -25,8 +26,18 @@ if (Test-Path -LiteralPath $taskState) {
   $taskPriorProcess = Get-CimInstance Win32_Process -Filter "ProcessId=$($taskPrior.serverPid)" -ErrorAction SilentlyContinue
   if ($taskPriorProcess -and $taskPriorProcess.CommandLine -like "*$taskRoot*serve.mjs*") { Write-Host "Already running: $($taskPrior.url)"; exit 0 }
 }
-$taskListener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,0)
-$taskListener.Start()
+$taskOriginFile = Join-Path $taskLocal 'launcher-origin.json'
+$taskPreferredPort = 0
+if (Test-Path -LiteralPath $taskOriginFile) {
+  try { $taskPreferredPort = [int]((Get-Content -LiteralPath $taskOriginFile -Raw | ConvertFrom-Json).port) } catch { $taskPreferredPort = 0 }
+}
+if ($taskPreferredPort -lt 1 -or $taskPreferredPort -gt 65535) { $taskPreferredPort = 0 }
+$taskListener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,$taskPreferredPort)
+try { $taskListener.Start() } catch {
+  Write-Host "Previous local port $taskPreferredPort is occupied. Selecting a free port; browser saves belong to the previous origin. Use export/import to move them."
+  $taskListener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,0)
+  $taskListener.Start()
+}
 $taskPort = $taskListener.LocalEndpoint.Port
 $taskListener.Stop()
 $taskUrl = "http://127.0.0.1:$taskPort/"
@@ -34,6 +45,7 @@ $taskProcess = Start-Process -FilePath $taskNode -ArgumentList @('"' + (Join-Pat
 Start-Sleep -Milliseconds 1200
 if ($taskProcess.HasExited) { Get-Content -LiteralPath "$taskLocal\server-error.log"; throw 'Local server exited. Error log retained in .local.' }
 try { $null = Invoke-WebRequest -Uri $taskUrl -UseBasicParsing -TimeoutSec 10 } catch { Get-Content -LiteralPath "$taskLocal\server-error.log"; throw }
+@{port=$taskPort;url=$taskUrl} | ConvertTo-Json | Set-Content -LiteralPath $taskOriginFile -Encoding UTF8
 $taskProfile = Join-Path $taskLocal 'browser-profile'
 $taskPreferences = Join-Path $taskProfile 'Default\Preferences'
 if (-not (Test-Path -LiteralPath $taskPreferences)) {

@@ -8,9 +8,9 @@ A browser-based, original low-poly 3D workplace game with an articulated customi
 
 ## Play and run locally
 
-Published game: https://aaronstarrett.github.io/taxwire-am-world-unofficial/ (release verification is recorded in BUILD_STATE.md).
+Published game: https://aaronstarrett.github.io/taxwire-am-world-unofficial/ (deployed and tested; evidence is recorded in BUILD_STATE.md).
 
-Windows project root: `D:\Career\TaxWire\Taxwire-AM-World\`. Double-click **RUN-TAXWIRE-AM-WORLD.cmd** after a successful build. It verifies the Extreme SSD, selects a free localhost port, opens an installed Chrome/Edge with a dedicated `.local/browser-profile` on D:, and prints the actual URL. Use **STOP-TAXWIRE-AM-WORLD.cmd** to stop only this project's tracked server and dedicated browser. Errors remain in `.local/server-error.log`. No global Node/browser settings are changed.
+Windows project root: `D:\Career\TaxWire\Taxwire-AM-World\`. Double-click **RUN-TAXWIRE-AM-WORLD.cmd** after a successful build. It verifies the Extreme SSD, reuses its saved localhost port when free (or selects a free port with an origin-change warning), opens an installed Chrome/Edge with a dedicated `.local/browser-profile` on D:, and prints the actual URL. Use **STOP-TAXWIRE-AM-WORLD.cmd** to stop only this project's tracked server and dedicated browser. Errors remain in `.local/server-error.log`. No global Node/browser settings are changed.
 
 Use Node **24+**. If the installed Node is older, the launcher can reuse an already bundled Codex Node runtime by copying it to `.local/runtime` on D:. The implementation also uses `.local/node.exe` copied from that existing runtime. No operating system or global SDK installation is needed.
 
@@ -52,7 +52,7 @@ Brand colors were derived by inspecting public Taxwire HTML. Signage uses an ori
 
 Meaningful actions autosave to IndexedDB in the current browser profile. The D: launcher uses `.local/browser-profile`; ordinary browsers store data wherever that browser manages its profile. Windows/Chrome/Codex may write host-controlled application data outside D:; this website cannot control all operating-system caches. Project-controlled caches, builds, exports, browser test profiles, evidence and downloads remain on D:.
 
-**Localhost, GitHub Pages and other devices do not automatically share saves.** Open Saves & export to download validated training history or an engine-specific world checkpoint. Imports show provenance, version and case compatibility and preserve newer local progress and unknown extensions. Different case fingerprints do not pass a different local case. Imported history is self-reported, not a verified credential. Checkpoints, backup-before-upgrade, corrupt-save recovery, multiple profiles and reset confirmation are implemented.
+**Localhost, GitHub Pages and other devices do not automatically share saves.** A different local port is also a different save origin; the launcher remembers its port to preserve local progress across restarts. Open Saves & export to download validated training history or an engine-specific world checkpoint. Imports show provenance, version and case compatibility and preserve newer local progress and unknown extensions. Different case fingerprints do not pass a different local case. Imported history is self-reported, not a verified credential. Checkpoints, backup-before-upgrade, corrupt-save recovery, multiple profiles and reset confirmation are implemented.
 
 The shared contract is in `public/compatibility/training.schema.json`, with two synthetic edition fixtures. A real export from the independently built Academy has not been tested; actual cross-app interoperability is unverified. No automatic synchronization or cross-origin database access is assumed. Keep learner exports private and outside Git.
 
