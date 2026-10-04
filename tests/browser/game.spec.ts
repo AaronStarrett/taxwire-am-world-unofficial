@@ -119,7 +119,7 @@ test("movement, wall collision, drag camera, typing focus and meaningful desk in
         // Software-rendered runners advance fewer animation frames per wall-clock second.
         return Number(position.split(",")[1]) > 27.2 && stableSamples >= 2;
       },
-      { timeout: 60000, intervals: [750] },
+      { timeout: process.env.CI ? 120000 : 60000, intervals: [750] },
     )
     .toBe(true);
   const wallPosition = await page
