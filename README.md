@@ -8,7 +8,7 @@ A browser-based 3D workplace game with original smooth adult character models, a
 
 ## Play and run locally
 
-Published game: https://aaronstarrett.github.io/taxwire-am-world-unofficial/ (the previous release is verified; revised release verification is recorded separately in BUILD_STATE.md).
+Published game: https://aaronstarrett.github.io/taxwire-am-world-unofficial/ — upgraded application verified on the actual HTTPS site, with local servers stopped. See BUILD_STATE.md for the tested application commit and release record. Reload an already-open older page to load the upgrade; browser-local progress is preserved and backed up during migration.
 
 Windows project root: `D:\Career\TaxWire\Taxwire-AM-World\`. Double-click **RUN-TAXWIRE-AM-WORLD.cmd** after a successful build. It verifies the Extreme SSD, reuses its saved localhost port when free (or selects a free port with an origin-change warning), opens an installed Chrome/Edge with a dedicated `.local/browser-profile` on D:, and prints the actual URL. Use **STOP-TAXWIRE-AM-WORLD.cmd** to stop only this project's tracked server and dedicated browser. Errors remain in `.local/server-error.log`. No global Node/browser settings are changed.
 

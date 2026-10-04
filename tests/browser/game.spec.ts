@@ -110,14 +110,17 @@ test("movement, wall collision, drag camera, typing focus and meaningful desk in
   await expect
     .poll(
       async () => {
-        // Observe two real frames so a slow renderer's unchanged UI is not mistaken for a wall stop.
+        // Eight frames span the slow renderer's six-frame position publication cycle.
         await page.evaluate(
           () =>
-            new Promise<void>((resolveResult) =>
-              requestAnimationFrame(() =>
-                requestAnimationFrame(() => resolveResult()),
-              ),
-            ),
+            new Promise<void>((resolveResult) => {
+              let remaining = 8;
+              const observe = () => {
+                if (--remaining === 0) resolveResult();
+                else requestAnimationFrame(observe);
+              };
+              requestAnimationFrame(observe);
+            }),
         );
         const position = (await page
           .locator("#world-shell")
