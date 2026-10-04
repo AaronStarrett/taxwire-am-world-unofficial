@@ -6,6 +6,7 @@ export type WorldObject = {
   kind: InteractionKind;
   x: number;
   z: number;
+  contactId?: string;
 };
 export type WorldLocation = {
   id: string;
@@ -63,6 +64,12 @@ function place(
       id: objectId,
       label,
       kind,
+      ...(kind === "npc"
+        ? {
+            contactId: contacts.find((person) => label.startsWith(person.name))
+              ?.id,
+          }
+        : {}),
       ...localToWorld(x, z, centerX, centerZ, rotation),
     })),
   };
@@ -102,6 +109,13 @@ export const locations: WorldLocation[] = [
         2.0,
       ],
       ["meeting", "Team meeting", "meeting", 3.4, -1.5],
+      [
+        "mentor",
+        personLabel("npc-mentor", "Account management mentor"),
+        "npc",
+        -1.5,
+        -0.2,
+      ],
     ],
   ),
   place(

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { content } from "../src/content";
+import type { GameAction } from "../src/engine";
 import {
   activeStep,
   createState,
@@ -8,15 +9,143 @@ import {
   missionAvailable,
   scoreDimensions,
   transition,
+  TUTORIAL_MISSION_ID,
+  tutorialObjective,
   validateTrainingExport,
 } from "../src/engine";
 
 describe("authored campaign integration through the shared engine", () => {
-  it("makes all 24 core, 24 advanced, and 4 capstone cases reachable and evidence-backed", () => {
+  it("completes the first day then reaches all 24 core, 24 advanced, and 4 capstone cases with evidence", () => {
     let state = createState(
       { id: "synthetic-campaign", displayName: "Synthetic Campaign Test" },
       20261003,
     );
+    state = transition(
+      state,
+      { type: "TUTORIAL_START", id: "campaign-first-day" },
+      content,
+    );
+    state = transition(
+      state,
+      { type: "POSITION", x: -22, z: 22, yaw: 0 },
+      content,
+    );
+    const firstDayActions: GameAction[] = [
+      {
+        type: "TUTORIAL_WORLD",
+        id: "campaign-move",
+        event: {
+          type: "target-reached",
+          objectId: "first-day-marker",
+          distance: 30,
+          input: "keyboard",
+        },
+      },
+      {
+        type: "TUTORIAL_WORLD",
+        id: "campaign-camera",
+        event: { type: "camera", angle: 0.3, input: "pointer" },
+      },
+      {
+        type: "TUTORIAL_WORLD",
+        id: "campaign-mentor",
+        event: { type: "interacted", objectId: "mentor", input: "keyboard" },
+      },
+      {
+        type: "TUTORIAL_WORLD",
+        id: "campaign-desk",
+        event: { type: "interacted", objectId: "workbench", input: "keyboard" },
+      },
+      {
+        type: "TUTORIAL_ACT",
+        id: "campaign-inbox",
+        stepId: "inbox",
+        choiceId: "identify-request",
+      },
+      {
+        type: "SCHEDULE",
+        id: "campaign-calendar",
+        npcId: "npc-cedarline-1",
+        day: 2,
+        minute: 600,
+        duration: 20,
+      },
+      {
+        type: "TUTORIAL_ACT",
+        id: "campaign-accounts",
+        stepId: "accounts",
+        choiceId: "relevant-facts",
+        selectedIds: ["channels", "announced-portal"],
+      },
+      {
+        type: "SAVE_NOTE",
+        id: "campaign-journal",
+        missionId: TUTORIAL_MISSION_ID,
+        noteType: "first-day-brief",
+        body: "Read the channels and announcement; ask Theo for launch timing and pilot records before making scope claims.",
+      },
+      {
+        type: "TUTORIAL_ACT",
+        id: "campaign-facts",
+        stepId: "known-missing",
+        choiceId: "separate-facts",
+        selectedIds: [
+          "channels",
+          "announced-portal",
+          "launch-date",
+          "pilot-records",
+        ],
+      },
+      {
+        type: "TUTORIAL_ACT",
+        id: "campaign-owner",
+        stepId: "owner",
+        choiceId: "retain-owner",
+        owner: "learner",
+      },
+      {
+        type: "TUTORIAL_ACT",
+        id: "campaign-update",
+        stepId: "update",
+        choiceId: "bounded-update",
+        body: "The existing channels and announcement are confirmed. Theo supplies missing pilot facts; I retain the check-in and scope remains unverified.",
+      },
+      {
+        type: "TUTORIAL_ACT",
+        id: "campaign-followup",
+        stepId: "followup",
+        choiceId: "create-followup",
+      },
+      {
+        type: "TUTORIAL_ACT",
+        id: "campaign-response",
+        stepId: "later-response",
+        choiceId: "check-response",
+      },
+      {
+        type: "TUTORIAL_ACT",
+        id: "campaign-verify",
+        stepId: "verify",
+        choiceId: "verify-response",
+      },
+      {
+        type: "TUTORIAL_ACT",
+        id: "campaign-debrief",
+        stepId: "debrief",
+        choiceId: "retain-lesson",
+      },
+    ];
+    for (const action of firstDayActions) {
+      const before = state.tutorial.stepIndex;
+      state = transition(state, action, content);
+      expect(
+        state.tutorial.stepIndex,
+        `${tutorialObjective(state, content)?.id}: ${state.notifications.at(-1)}`,
+      ).toBe(before + 1);
+    }
+    expect(state.tutorial.status).toBe("completed");
+    expect(state.clockMinutes).toBe(0);
+    expect(state.missions).toEqual({});
     const pending = [...content.missions];
     expect(pending).toHaveLength(52);
     let actionNumber = 0;
@@ -147,5 +276,5 @@ describe("authored campaign integration through the shared engine", () => {
     expect(validateTrainingExport(exportProgress(state, content)).valid).toBe(
       true,
     );
-  });
+  }, 120_000);
 });

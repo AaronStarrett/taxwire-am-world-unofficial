@@ -1,5 +1,10 @@
 import { createState, SAVE_VERSION } from "./index";
 import type { GameState } from "./types";
+import {
+  createTutorial,
+  TUTORIAL_STEP_IDS,
+  TUTORIAL_VERSION,
+} from "./tutorial";
 
 const DATABASE = "taxwire-am-world-local";
 const MAX_CHECKPOINTS = 10;
@@ -63,6 +68,25 @@ function strings(value: unknown): value is string[] {
     Array.isArray(value) && value.every((item) => typeof item === "string")
   );
 }
+class UnsupportedSaveVersion extends Error {}
+function assistance(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.missionId === "string" &&
+    typeof value.stepId === "string" &&
+    [
+      "hint",
+      "explain",
+      "demonstration",
+      "show-location",
+      "stuck",
+      "mode-change",
+    ].includes(String(value.kind)) &&
+    [1, 2, 3].includes(Number(value.level)) &&
+    finiteInteger(value.clockMinutes)
+  );
+}
 export function migrateState(data: unknown): {
   state: GameState;
   upgraded: boolean;
@@ -73,8 +97,16 @@ export function migrateState(data: unknown): {
     data.version < 1 ||
     data.version > SAVE_VERSION
   )
-    throw new Error(
+    throw new UnsupportedSaveVersion(
       "Save version is unsupported; newer saves are never silently downgraded.",
+    );
+  if (
+    isRecord(data.tutorial) &&
+    typeof data.tutorial.version === "number" &&
+    data.tutorial.version > TUTORIAL_VERSION
+  )
+    throw new UnsupportedSaveVersion(
+      "Save contains an unsupported guided first-day version; newer saves are never silently downgraded.",
     );
   if (
     !isRecord(data.learner) ||
@@ -108,6 +140,90 @@ export function migrateState(data: unknown): {
     },
     version: SAVE_VERSION,
   } as GameState;
+  if (data.version < 3) {
+    state.tutorial = createTutorial(true);
+    state.guidanceMode = ["guided", "assisted", "independent"].includes(
+      String(data.guidanceMode),
+    )
+      ? (data.guidanceMode as GameState["guidanceMode"])
+      : "guided";
+    state.assistanceHistory = [];
+    for (const progress of Object.values(state.missions))
+      if (isRecord(progress) && Array.isArray(progress.attempts))
+        for (const attempt of progress.attempts)
+          if (isRecord(attempt)) {
+            attempt.assistanceVerified = false;
+            delete attempt.unaided;
+          }
+  }
+  const tutorial = state.tutorial;
+  if (!isRecord(data.tutorial) && data.version === SAVE_VERSION)
+    throw new Error("Current save is missing its versioned guided first day.");
+  if (
+    !isRecord(tutorial) ||
+    tutorial.version !== 1 ||
+    !["not_started", "active", "completed", "skipped"].includes(
+      String(tutorial.status),
+    ) ||
+    !finiteInteger(tutorial.stepIndex) ||
+    tutorial.stepIndex > TUTORIAL_STEP_IDS.length ||
+    !finiteInteger(tutorial.run) ||
+    !strings(tutorial.completedStepIds) ||
+    tutorial.completedStepIds.join("|") !==
+      TUTORIAL_STEP_IDS.slice(0, tutorial.stepIndex).join("|") ||
+    !Array.isArray(tutorial.history) ||
+    tutorial.history.length > 100000 ||
+    !["keyboard", "pointer", "touch", "menu"].includes(
+      String(tutorial.inputMethod),
+    ) ||
+    !finiteInteger(tutorial.simulatedMinutes) ||
+    typeof tutorial.legacyOptIn !== "boolean" ||
+    !isRecord(tutorial.controlOrigin) ||
+    ![
+      tutorial.controlOrigin.x,
+      tutorial.controlOrigin.z,
+      tutorial.controlOrigin.yaw,
+    ].every((value) => typeof value === "number" && Number.isFinite(value)) ||
+    !isRecord(tutorial.scenario) ||
+    typeof tutorial.scenario.accountId !== "string" ||
+    typeof tutorial.scenario.owner !== "string" ||
+    !strings(tutorial.scenario.knownIds) ||
+    !strings(tutorial.scenario.missingIds) ||
+    typeof tutorial.scenario.responseVerified !== "boolean"
+  )
+    throw new Error("Invalid versioned guided first-day state.");
+  if (
+    (tutorial.status === "completed") !==
+      (tutorial.stepIndex === TUTORIAL_STEP_IDS.length) ||
+    (tutorial.status === "not_started" && tutorial.stepIndex !== 0) ||
+    (tutorial.status === "active" && tutorial.run < 1)
+  )
+    throw new Error("Invalid ordered guided first-day progress.");
+  for (const row of tutorial.history)
+    if (
+      !isRecord(row) ||
+      typeof row.id !== "string" ||
+      !finiteInteger(row.run) ||
+      !TUTORIAL_STEP_IDS.includes(row.stepId) ||
+      typeof row.action !== "string" ||
+      typeof row.accepted !== "boolean" ||
+      !finiteInteger(row.clockMinutes) ||
+      !strings(row.evidenceIds) ||
+      typeof row.message !== "string" ||
+      (row.classifications !== undefined &&
+        (!isRecord(row.classifications) ||
+          !Object.values(row.classifications).every(
+            (value) => value === "known" || value === "missing",
+          )))
+    )
+      throw new Error("Invalid guided action evidence.");
+  if (
+    !["guided", "assisted", "independent"].includes(state.guidanceMode) ||
+    !Array.isArray(state.assistanceHistory) ||
+    state.assistanceHistory.length > 100000 ||
+    !state.assistanceHistory.every(assistance)
+  )
+    throw new Error("Invalid authored assistance history.");
   if (
     !["low", "medium", "high"].includes(state.settings.quality) ||
     !Number.isFinite(state.settings.textScale) ||
@@ -166,7 +282,7 @@ export function migrateState(data: unknown): {
       progress.bestScore > 100
     )
       throw new Error("Invalid mission progress in save.");
-    for (const attempt of progress.attempts)
+    for (const attempt of progress.attempts) {
       if (
         !isRecord(attempt) ||
         !Array.isArray(attempt.trace) ||
@@ -175,6 +291,17 @@ export function migrateState(data: unknown): {
         !finiteInteger(attempt.startedAt)
       )
         throw new Error("Invalid attempt history in save.");
+      if (
+        (attempt.assistance !== undefined &&
+          (!Array.isArray(attempt.assistance) ||
+            !attempt.assistance.every(assistance))) ||
+        (attempt.unaided === true &&
+          (attempt.assistance?.length ||
+            attempt.assistanceVerified !== true ||
+            attempt.mode !== "independent"))
+      )
+        throw new Error("Invalid attempt assistance evidence.");
+    }
   }
   for (const task of state.tasks)
     if (
@@ -227,7 +354,7 @@ export function saveState(state: GameState): Promise<void> {
   const operation = saving
     .catch(() => undefined)
     .then(async () => {
-      migrateState(snapshot);
+      const validated = migrateState(snapshot).state;
       const database = await open();
       try {
         const transaction = database.transaction(
@@ -239,7 +366,7 @@ export function saveState(state: GameState): Promise<void> {
         const checkpoints = transaction.objectStore("checkpoints");
         const prior = (await request(saves.get(snapshot.learner.id))) as
           Envelope | undefined;
-        const envelope = encode(snapshot);
+        const envelope = encode(validated);
         envelope.sequence = (prior?.sequence ?? 0) + 1;
         if (prior && prior.payload === envelope.payload) {
           await done;
@@ -254,14 +381,17 @@ export function saveState(state: GameState): Promise<void> {
               id: `${snapshot.learner.id}:${envelope.sequence}:${checksum(prior.payload)}`,
               kind: "checkpoint",
             });
-          } catch {
-            transaction
-              .objectStore("backups")
-              .put({
-                ...prior,
-                id: `corrupt:${snapshot.learner.id}`,
-                kind: "corrupted-save",
-              });
+          } catch (error) {
+            if (error instanceof UnsupportedSaveVersion) {
+              transaction.abort();
+              await done.catch(() => undefined);
+              throw error;
+            }
+            transaction.objectStore("backups").put({
+              ...prior,
+              id: `corrupt:${snapshot.learner.id}`,
+              kind: "corrupted-save",
+            });
           }
         }
         saves.put(envelope);
@@ -325,7 +455,11 @@ export async function loadState(learnerId: string): Promise<GameState | null> {
       await saveState(result.state);
     }
     return result.state;
-  } catch {
+  } catch (error) {
+    if (error instanceof UnsupportedSaveVersion) {
+      await backup(envelope, "unsupported-version");
+      throw error;
+    }
     await backup(envelope, "corrupt");
     const recovered = await recoverState(learnerId);
     if (recovered) {

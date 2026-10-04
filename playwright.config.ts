@@ -2,8 +2,13 @@ import { defineConfig } from "@playwright/test";
 export default defineConfig({
   testDir: "tests/browser",
   testMatch: process.env.TRANSFER_INPUT
-    ? ["game.spec.ts", "hosted-transfer.spec.ts"]
-    : ["game.spec.ts"],
+    ? [
+        "game.spec.ts",
+        "guided-day.spec.ts",
+        "compatibility.spec.ts",
+        "hosted-transfer.spec.ts",
+      ]
+    : ["game.spec.ts", "guided-day.spec.ts", "compatibility.spec.ts"],
   timeout: 120000,
   expect: { timeout: 15000 },
   workers: 1,

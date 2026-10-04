@@ -7,7 +7,7 @@ import { advancedMissions, capstoneMissions } from "./missions-advanced";
 import { documents } from "./mission-tools";
 
 export const content: ContentPack = {
-  version: "twaw-2026.10.03-v1",
+  version: "twaw-2026.10.03-v2",
   competencies,
   accounts,
   contacts,
@@ -18,12 +18,12 @@ export const content: ContentPack = {
     {
       session: 1,
       title: "An owned first day: lifecycle, discovery and clear updates",
-      missionIds: ["M-T01", "M-A01", "M-A02", "M-A04"],
+      missionIds: ["M-A02", "M-A01", "M-T01", "M-A04"],
     },
     {
       session: 2,
       title: "Finance facts, stakeholder authority and a feasible day",
-      missionIds: ["M-T02", "M-A03", "M-T03", "M-A05"],
+      missionIds: ["M-A03", "M-A05", "M-T02", "M-T03"],
     },
     {
       session: 3,

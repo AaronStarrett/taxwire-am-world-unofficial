@@ -13,3 +13,5 @@ Fiber's installed package omits its LICENSE file; its full MIT notice was retrie
 Exact versions and integrity hashes are in package-lock.json. No external asset fetch is required for the game. Public tax teaching is independently authored and links to official sources; citations are references, not a claim to redistribute source documents. The role is paraphrased with public provenance rather than reproduced.
 
 Unofficial training prototype. Not endorsed by Taxwire. Fictional customers. Educational simulation—not tax advice.
+
+Continuation artwork: smooth sculpted character heads, tailored bodies, articulated limbs, furniture geometry and locally authored wood/fabric/stone surface textures are original procedural work. The private concept-image references are not distributed. No external model, texture, animation, font, generation provider or additional runtime package was added. The public software notices retain exact dependency provenance; helper imports from Three.js are covered by its retained MIT notice.

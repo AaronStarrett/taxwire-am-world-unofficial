@@ -19,10 +19,14 @@ test("move real localhost exports into a fresh hosted browser profile", async ()
       viewport: { width: 1280, height: 720 },
       acceptDownloads: true,
       downloadsPath: resolve(".local/exports"),
-      recordVideo: {
-        dir: resolve(".local/evidence/recordings"),
-        size: { width: 1280, height: 720 },
-      },
+      ...(process.env.RECORD_GAMEPLAY === "1"
+        ? {
+            recordVideo: {
+              dir: resolve(".local/evidence/recordings"),
+              size: { width: 1280, height: 720 },
+            },
+          }
+        : {}),
       args: [
         ...(process.platform === "linux"
           ? ["--use-gl=angle", "--use-angle=swiftshader"]
@@ -34,7 +38,7 @@ test("move real localhost exports into a fresh hosted browser profile", async ()
     },
   );
   try {
-    const page = await context.newPage();
+    const page = context.pages()[0] || (await context.newPage());
     page.setDefaultTimeout(15000);
     const localRequests: string[] = [];
     page.on("request", (r) => {
@@ -45,7 +49,7 @@ test("move real localhost exports into a fresh hosted browser profile", async ()
         localRequests.push(r.url());
     });
     await page.goto(base);
-    await page.getByRole("button", { name: /Enter your world/ }).click();
+    await page.getByRole("button", { name: /Explore freely/ }).click();
     await page.getByRole("button", { name: "Cases", exact: true }).click();
     await expect(
       page.locator('.mission-card[data-case-id="M-T01"]'),
@@ -95,7 +99,7 @@ test("move real localhost exports into a fresh hosted browser profile", async ()
       page.getByText("Saved in this browser", { exact: false }),
     ).toBeVisible();
     await page.reload();
-    await page.getByRole("button", { name: /Enter your world/ }).click();
+    await page.getByRole("button", { name: /Explore freely/ }).click();
     await page.getByRole("button", { name: "Cases", exact: true }).click();
     await expect(
       page.locator('.mission-card[data-case-id="M-T01"]'),

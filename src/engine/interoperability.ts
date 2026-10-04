@@ -102,12 +102,19 @@ export function exportProgress(
   content: ContentPack,
   now = new Date(),
 ): TrainingExport {
+  const provenance = (id: string) => {
+    const progress = state.missions[id];
+    return progress?.status === "completed"
+      ? ([...progress.attempts].reverse().find((attempt) => attempt.passed) ??
+          progress.attempts.at(-1))
+      : progress?.attempts.at(-1);
+  };
   const missions: TrainingExport["missions"] = content.missions.map(
     (mission) => {
       const progress = state.missions[mission.id];
       return {
         id: mission.id,
-        version: mission.version,
+        version: provenance(mission.id)?.version ?? mission.version,
         status:
           progress?.status === "completed"
             ? "completed"
@@ -168,15 +175,30 @@ export function exportProgress(
       ...structuredClone(state.extensions),
       sourceEdition: "3d-world",
       caseFingerprints: Object.fromEntries(
-        content.missions.map((mission) => [mission.id, mission.fingerprint]),
+        content.missions.map((mission) => [
+          mission.id,
+          provenance(mission.id)?.fingerprint ??
+            state.missions[mission.id]?.fingerprint ??
+            mission.fingerprint,
+        ]),
       ),
       remediatedMissionIds,
-      attemptHistory: Object.fromEntries(
-        Object.entries(state.missions)
-          .filter(([, progress]) => progress.attempts.length)
-          .map(([id, progress]) => [id, structuredClone(progress.attempts)]),
-      ),
+      attemptHistory: {
+        ...(state.extensions.attemptHistory &&
+        typeof state.extensions.attemptHistory === "object" &&
+        !Array.isArray(state.extensions.attemptHistory)
+          ? structuredClone(state.extensions.attemptHistory)
+          : {}),
+        ...Object.fromEntries(
+          Object.entries(state.missions)
+            .filter(([, progress]) => progress.attempts.length)
+            .map(([id, progress]) => [id, structuredClone(progress.attempts)]),
+        ),
+      },
       importProvenance: structuredClone(state.imports),
+      guidedFirstDay: structuredClone(state.tutorial),
+      assistanceHistory: structuredClone(state.assistanceHistory),
+      assistanceTrackingVersion: 1,
       assessmentNotice:
         "Imported history is self-reported. Game titles and scores are not professional credentials.",
     },
@@ -309,6 +331,36 @@ export function mergeProgress(
         mission.criticalFailures.length === 0,
     ),
   );
+  const histories =
+    value.extensions.attemptHistory &&
+    typeof value.extensions.attemptHistory === "object" &&
+    !Array.isArray(value.extensions.attemptHistory)
+      ? (value.extensions.attemptHistory as Record<string, unknown>)
+      : {};
+  const eligibleMasteryIds = eligibleMissionIds.filter((id) => {
+    const attempts = histories[id];
+    const mission = content.missions.find((item) => item.id === id)!;
+    return (
+      Array.isArray(attempts) &&
+      attempts.some(
+        (attempt) =>
+          attempt &&
+          typeof attempt === "object" &&
+          attempt.passed === true &&
+          attempt.mode === "independent" &&
+          attempt.unaided === true &&
+          attempt.assistanceVerified === true &&
+          Array.isArray(attempt.assistance) &&
+          attempt.assistance.length === 0 &&
+          Array.isArray(attempt.criticalFailures) &&
+          attempt.criticalFailures.length === 0 &&
+          Number.isFinite(attempt.score) &&
+          attempt.score >= 70 &&
+          attempt.fingerprint === mission.fingerprint &&
+          attempt.version === mission.version,
+      )
+    );
+  });
   for (const imported of value.missions.filter((item) =>
     preview.matchedMissionIds.includes(item.id),
   )) {
@@ -327,7 +379,9 @@ export function mergeProgress(
       status: "completed",
       stepIndex: content.missions.find((mission) => mission.id === imported.id)!
         .steps.length,
-      mode: "independent",
+      mode: eligibleMasteryIds.includes(imported.id)
+        ? "independent"
+        : "assisted",
       attempts: [],
       bestScore: imported.bestScore,
       criticalFailures: [...imported.criticalFailures],
@@ -349,7 +403,7 @@ export function mergeProgress(
       evidenceMissionIds: [],
     };
     const evidence = imported.evidenceMissionIds.filter((id) =>
-      eligibleMissionIds.includes(id),
+      eligibleMasteryIds.includes(id),
     );
     const eligibleLevel =
       imported.level === "demonstrated" && !evidence.length

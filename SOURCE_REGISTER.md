@@ -18,7 +18,7 @@ The answer keys grade stated synthetic arithmetic, evidence handling, bounded au
 
 The full role description was inspected, and this public project includes only a concise original paraphrase. Relevant role themes are post-onboarding portfolio ownership; learning business models, systems and compliance footprints; tax/operations coordination; risk, retention and growth; business reviews, forecasts, playbooks and feedback. It does not establish actual internal tools, procedures, targets, approval limits, service guarantees or a real employment relationship. No learner background or private prompt is part of this register.
 
-Each runtime source includes title, URL, jurisdiction, checked date, applicable-period limits, case fact scope, uncertainty, review status and a summary. Each mission and document references source IDs; authoring validation rejects missing references. Source and mission fingerprints are versioned with the content. Future revisions must establish the actual period and reviewed authority before introducing an authoritative legal answer key.
+Each runtime source includes title, URL, jurisdiction, checked date, applicable-period limits, case fact scope, uncertainty, review status and a summary. Each mission and document references source IDs; authoring validation rejects missing references. Source records belong to the versioned content pack; missions also retain individual versions and case fingerprints. Source records do not have individual fingerprint fields. Future revisions must establish the actual period and reviewed authority before introducing an authoritative legal answer key.
 
 Professional-review checklist for a future authorized content reviewer:
 

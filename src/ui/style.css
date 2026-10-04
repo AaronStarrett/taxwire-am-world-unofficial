@@ -15,6 +15,222 @@
   --line: #dfe6db;
   --muted: #657568;
 }
+.objective-panel {
+  position: absolute;
+  top: 22px;
+  right: 22px;
+  width: 325px;
+  max-height: calc(100% - 140px);
+  overflow: auto;
+  background: rgba(248, 251, 246, 0.95);
+  border: 1px solid #d8e4d9;
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 8px 30px #0b29251f;
+  backdrop-filter: blur(10px);
+}
+.objective-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #426b57;
+  font-size: 9px;
+  letter-spacing: 1.1px;
+  font-weight: 750;
+  margin-bottom: 10px;
+}
+.objective-panel h2 {
+  font-size: 17px;
+  margin-bottom: 12px;
+}
+.objective-panel dl {
+  margin: 0 0 12px;
+  display: grid;
+  grid-template-columns: 66px 1fr;
+  gap: 7px 8px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.objective-panel dt {
+  font-weight: 700;
+  color: #4e715c;
+}
+.objective-panel dd {
+  margin: 0;
+}
+.guidance-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin: 10px 0;
+}
+.guidance-actions > button:not(.primary):not(.secondary):not(.text-button) {
+  border: 1px solid #cbdacc;
+  border-radius: 6px;
+  background: #f2f8ed;
+  padding: 8px;
+  font-size: 11px;
+  min-height: 32px;
+}
+.objective-panel .objective-footer {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.objective-panel .text-button {
+  margin: 0;
+  font-size: 10px;
+}
+.objective-panel.compact {
+  position: relative;
+  top: auto;
+  right: auto;
+  width: 100%;
+  max-height: none;
+  box-shadow: none;
+  margin: 0 0 18px;
+  padding: 13px;
+  background: #eef5ea;
+}
+.objective-panel.compact dl {
+  grid-template-columns: 65px 1fr;
+  font-size: 12px;
+}
+.objective-panel.compact h2 {
+  font-size: 16px;
+}
+.mentor-help {
+  background: #e5f0df;
+  padding: 10px;
+  border-left: 3px solid #639b72;
+  border-radius: 3px;
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 10px 0;
+}
+.mentor-welcome {
+  max-width: 740px;
+  padding: 22px 0 8px;
+}
+.character-portrait {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+}
+.mentor-identity {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 20px;
+}
+.mentor-identity > svg {
+  width: 62px;
+  height: 70px;
+  flex: none;
+}
+.tool-lesson {
+  padding: 10px 12px;
+  background: #f4f7ef;
+  border: 1px solid #dce5d7;
+  border-radius: 7px;
+  margin-bottom: 14px;
+  font-size: 12px;
+}
+.tool-lesson summary {
+  cursor: pointer;
+  font-weight: 650;
+}
+.tool-lesson p:last-child {
+  margin-bottom: 0;
+}
+.mentor-welcome h2 {
+  font-size: 26px;
+}
+.core-loop {
+  font-size: 18px;
+  color: #174f39;
+  border-left: 3px solid #46936a;
+  padding: 8px 18px;
+}
+.first-day-tools {
+  border: 1px solid #a7cbaa;
+  background: #f8fcf6;
+  margin-bottom: 22px;
+}
+.first-day-tools .tutorial-choice {
+  display: block;
+  text-align: left;
+  width: 100%;
+  margin: 10px 0;
+}
+.fact-context {
+  padding: 12px;
+  border-left: 3px solid #78aa81;
+  background: #f0f6ed;
+  margin-bottom: 10px;
+}
+.fact-context p {
+  margin: 6px 0 0;
+  font-size: 12px;
+}
+.fact-options {
+  display: grid;
+  gap: 10px;
+  margin: 16px 0;
+}
+.practice-request {
+  padding: 15px;
+  background: #ecf3e8;
+  border: 1px solid #c7dac7;
+  border-radius: 8px;
+}
+.resume-recap {
+  font-size: 12px;
+  max-width: 340px;
+  background: #eff4e9;
+  padding: 10px;
+  border-radius: 6px;
+}
+.map-pin.guide-target {
+  outline: 3px solid #84b661;
+  outline-offset: 4px;
+}
+.case-coach {
+  border: 1px solid #ccdcca;
+  background: #f5f9f0;
+  padding: 16px;
+  border-radius: 10px;
+  margin-bottom: 18px;
+}
+.case-coach ul {
+  padding-left: 20px;
+  line-height: 1.5;
+  font-size: 13px;
+}
+.case-coach small {
+  display: block;
+  font-size: 10px;
+  color: #536c58;
+  line-height: 1.5;
+  margin-top: 9px;
+}
+@media (max-width: 760px) {
+  .objective-panel:not(.compact) {
+    top: 85px;
+    right: 12px;
+    width: 285px;
+    max-height: calc(100% - 215px);
+    padding: 12px;
+  }
+  .objective-panel.compact dl {
+    font-size: 11px;
+  }
+  .top-center {
+    display: none;
+  }
+}
 * {
   box-sizing: border-box;
 }
@@ -564,6 +780,23 @@ input[type="color"] {
 }
 .workbench-overlay {
   padding: 20px;
+}
+.workbench-overlay.mentor-conversation {
+  background: linear-gradient(90deg, #13382924, transparent 60%);
+  backdrop-filter: none;
+}
+.mentor-conversation .workbench {
+  width: min(620px, 54%);
+  margin-left: 0;
+}
+.mentor-conversation .workbench-nav {
+  width: 145px;
+  padding-inline: 8px;
+}
+@media (max-width: 1000px) {
+  .mentor-conversation .workbench {
+    width: 100%;
+  }
 }
 .workbench {
   width: min(1420px, 100%);

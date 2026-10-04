@@ -18,8 +18,19 @@ import {
 import type { GameAction, GameState, TrainingExport } from "../engine/types";
 import { formatTime, minuteOfDay } from "../engine/time";
 import { locations } from "../world/locations";
+import { ObjectivePanel, FirstDayTools, MentorWelcome } from "./Guidance";
+import { tutorialObjective } from "../engine/tutorial";
+import {
+  getStepGuidance,
+  getBootcampGuidance,
+  modeDefinitions,
+  recommendedMissionOrder,
+  workToolGuidance,
+} from "../content/guidance";
 import { DISCLAIMER, download, uid } from "./App";
+import { Portrait } from "./Portrait";
 export type Panel =
+  | "guidance"
   | "missions"
   | "mission"
   | "map"
@@ -55,8 +66,12 @@ interface Props {
   reset: () => Promise<void>;
   retryGraphics: () => void;
   telemetry: { fps: number; drawCalls: number; triangles: number };
+  showWhere: () => void;
+  reframe: () => void;
+  guidanceLocation?: string;
 }
 const nav: [Panel, string, string][] = [
+  ["guidance", "First-day guide", "?"],
   ["missions", "Cases", "▣"],
   ["inbox", "Inbox", "✉"],
   ["calendar", "Calendar", "▦"],
@@ -75,6 +90,7 @@ const nav: [Panel, string, string][] = [
   ["map", "District map", "◇"],
 ];
 const titles: Record<Panel, string> = {
+  guidance: "Your guide to the working day",
   missions: "Choose your next case",
   mission: "Your working case",
   map: "A district built for your work",
@@ -162,14 +178,29 @@ export default function Workbench(props: Props) {
           )?.missionId),
   );
   const step = activeStep(state, content);
+  const firstDay = tutorialObjective(state, content);
+  const toolLesson =
+    panel in workToolGuidance
+      ? workToolGuidance[panel as keyof typeof workToolGuidance]
+      : undefined;
+  const visibleDocuments = new Set([
+    ...Object.values(state.missions).flatMap(
+      (progress) => progress.evidenceIds,
+    ),
+    ...(step?.documentIds || []),
+    ...(firstDay ? ["M-A02-packet"] : []),
+  ]);
   const preview = importData ? previewImport(importData, state, content) : null;
   const saveNote = (type: string) => {
     if (!note.trim()) return;
     dispatch({
       type: "SAVE_NOTE",
       id: uid(),
-      missionId: mission?.id || "free-practice",
-      noteType: type,
+      missionId:
+        firstDay?.id === "journal"
+          ? "guided-first-day"
+          : mission?.id || "free-practice",
+      noteType: firstDay?.id === "journal" ? "first-day-brief" : type,
       body: note,
     });
     setNote("");
@@ -181,10 +212,20 @@ export default function Workbench(props: Props) {
     );
   const showMission = (
     m: Mission,
-    mode: "guided" | "independent" | "replay" = "guided",
+    mode: "guided" | "assisted" | "independent" | "replay" = "guided",
   ) => {
     dispatch({ type: "START_MISSION", missionId: m.id, mode });
     open("mission");
+  };
+  const recordTeaching = (kind: "explain" | "demonstration") => {
+    if (firstDay || (state.activeMissionId && step))
+      dispatch({
+        type: "ASSISTANCE",
+        id: uid(),
+        kind,
+        missionId: firstDay ? "guided-first-day" : state.activeMissionId!,
+        stepId: firstDay?.id || step!.id,
+      });
   };
   const accountPicker = (
     <label className="field">
@@ -202,7 +243,9 @@ export default function Workbench(props: Props) {
     </label>
   );
   return (
-    <div className="workbench-overlay">
+    <div
+      className={`workbench-overlay ${panel === "guidance" && state.location === "hq" && (firstDay?.id === "mentor" || firstDay?.id === "desk") ? "mentor-conversation" : ""}`}
+    >
       <section
         className="workbench"
         role="dialog"
@@ -265,6 +308,110 @@ export default function Workbench(props: Props) {
             </button>
           </header>
           <div className="panel-body">
+            {toolLesson && (
+              <details
+                className="tool-lesson"
+                onToggle={(event) => {
+                  if (event.currentTarget.open) recordTeaching("explain");
+                }}
+              >
+                <summary>How to use this work tool</summary>
+                <p>{toolLesson.purpose}</p>
+                <p>
+                  <strong>Try:</strong> {toolLesson.action}
+                </p>
+                <p>
+                  <strong>Done when:</strong> {toolLesson.doneWhen}
+                </p>
+              </details>
+            )}
+            {(firstDay || state.activeMissionId) && (
+              <ObjectivePanel
+                key={`${firstDay?.id || step?.id}-${panel}`}
+                compact
+                state={state}
+                dispatch={dispatch}
+                open={open}
+                showWhere={props.showWhere}
+                reframe={props.reframe}
+              />
+            )}
+            {panel === "guidance" && (
+              <MentorWelcome state={state} dispatch={dispatch} open={open} />
+            )}
+            {panel === "guidance" && firstDay?.id === "mentor" && (
+              <button
+                className="primary"
+                onClick={() =>
+                  dispatch({
+                    type: "TUTORIAL_WORLD",
+                    id: uid(),
+                    event: {
+                      type: "interacted",
+                      objectId: "mentor",
+                      locationId: state.location,
+                      input: "menu",
+                    },
+                  })
+                }
+              >
+                Talk to Morgan Vale
+              </button>
+            )}
+            {panel === "guidance" && firstDay?.id === "desk" && (
+              <button
+                className="primary"
+                onClick={() => {
+                  dispatch({
+                    type: "TUTORIAL_WORLD",
+                    id: uid(),
+                    event: {
+                      type: "interacted",
+                      objectId: "workbench",
+                      locationId: state.location,
+                      input: "menu",
+                    },
+                  });
+                  open("inbox");
+                }}
+              >
+                Open workstation tools
+              </button>
+            )}
+            <FirstDayTools
+              key={firstDay?.id || "inactive"}
+              state={state}
+              dispatch={dispatch}
+              open={open}
+              panel={panel}
+            />
+            {panel === "guidance" && (
+              <div className="guidance-actions">
+                <button className="primary" onClick={props.showWhere}>
+                  Walk to the highlighted destination
+                </button>
+                <button className="secondary" onClick={props.reframe}>
+                  Reframe camera
+                </button>
+                <button className="secondary" onClick={() => open("map")}>
+                  Choose a reachable room
+                </button>
+                <button className="secondary" onClick={() => open("settings")}>
+                  Controls & recovery
+                </button>
+                {state.tutorial.status === "completed" && (
+                  <button
+                    className="primary"
+                    onClick={() => {
+                      const m = content.missions.find((m) => m.id === "M-A02")!;
+                      showMission(m, "guided");
+                    }}
+                  >
+                    Apply discovery in the next guided case
+                  </button>
+                )}
+              </div>
+            )}
             {state.notifications.length > 0 && (
               <div className="inline-status" role="status">
                 {state.notifications.at(-1)}
@@ -272,6 +419,21 @@ export default function Workbench(props: Props) {
             )}
             {panel === "missions" && (
               <>
+                <div className="callout">
+                  <strong>Your recommended learning path</strong>
+                  <p>
+                    Start with customer discovery and the handoff, then mix tax
+                    foundations with relationship work. Guided teaches each
+                    step; Assisted gives context and optional hints; Independent
+                    records your own application.
+                  </p>
+                  <button
+                    className="secondary"
+                    onClick={() => open("guidance")}
+                  >
+                    Start or resume first-day guidance
+                  </button>
+                </div>
                 <div className="panel-intro">
                   <p>
                     Work through a customer situation, produce evidence, and
@@ -307,6 +469,12 @@ export default function Workbench(props: Props) {
                 )}
                 <div className="mission-grid">
                   {content.missions
+                    .slice()
+                    .sort((a, b) => {
+                      const ai = recommendedMissionOrder.indexOf(a.id),
+                        bi = recommendedMissionOrder.indexOf(b.id);
+                      return (ai < 0 ? 999 : ai) - (bi < 0 ? 999 : bi);
+                    })
                     .filter(
                       (m) =>
                         (filter === "all" || m.stage === filter) &&
@@ -365,10 +533,23 @@ export default function Workbench(props: Props) {
                                 )
                               }
                             >
-                              {p?.status === "completed" ? "Replay" : "Begin"} →
+                              {p?.status === "in_progress"
+                                ? `Continue ${p.mode} attempt`
+                                : p?.status === "completed"
+                                  ? "Replay"
+                                  : "Begin"}{" "}
+                              →
                             </button>
                           </div>
-                          {unlocked && (
+                          {unlocked && p?.status !== "in_progress" && (
+                            <button
+                              className="text-button"
+                              onClick={() => showMission(m, "assisted")}
+                            >
+                              Assisted practice
+                            </button>
+                          )}
+                          {unlocked && p?.status !== "in_progress" && (
                             <button
                               className="text-button"
                               onClick={() => showMission(m, "independent")}
@@ -432,7 +613,7 @@ export default function Workbench(props: Props) {
                   {locations.map((l) => (
                     <button
                       key={l.id}
-                      className={`map-pin ${state.location === l.id ? "current" : ""}`}
+                      className={`map-pin ${state.location === l.id ? "current" : ""} ${props.guidanceLocation === l.id ? "guide-target" : ""}`}
                       style={{
                         left: `${50 + l.centerX * 1.6}%`,
                         top: `${50 + l.centerZ * 1.4}%`,
@@ -443,9 +624,11 @@ export default function Workbench(props: Props) {
                       <span>⌂</span>
                       <strong>{l.name}</strong>
                       <small>
-                        {state.visitedLocations.includes(l.id)
-                          ? "Travel here"
-                          : "Introduce location"}
+                        {props.guidanceLocation === l.id
+                          ? "Your current objective"
+                          : state.visitedLocations.includes(l.id)
+                            ? "Travel here"
+                            : "Introduce location"}
                       </small>
                     </button>
                   ))}
@@ -481,6 +664,10 @@ export default function Workbench(props: Props) {
                 <div className="message-list">
                   {content.missions
                     .filter((m) => m.stage === "core")
+                    .filter(
+                      (m) =>
+                        state.tutorial.status !== "active" || m.id === "M-A02",
+                    )
                     .slice(0, 8)
                     .map((m, i) => (
                       <button
@@ -538,6 +725,46 @@ export default function Workbench(props: Props) {
             )}
             {panel === "calendar" && (
               <>
+                <div className="card">
+                  <h2>Prepare and prioritize your day</h2>
+                  <p>
+                    Inspect customer promises, required evidence and available
+                    people. A deadline and an attractive opportunity need
+                    different decisions. Leave a buffer for verification.
+                  </p>
+                  <div className="day-priorities">
+                    {state.tasks
+                      .filter((t) => t.status === "open")
+                      .sort((a, b) => a.dueMinute - b.dueMinute)
+                      .slice(0, 5)
+                      .map((t) => (
+                        <p key={t.id}>
+                          <strong>{t.title}</strong>
+                          <br />
+                          {t.owner} · {formatTime(t.dueMinute)} ·{" "}
+                          {t.dueMinute < state.clockMinutes
+                            ? "Overdue: recover ownership and communicate"
+                            : "Confirm required input before promising closure"}
+                        </p>
+                      ))}
+                  </div>
+                  <label className="field">
+                    Your day plan
+                    <textarea
+                      aria-label="Day plan"
+                      value={note}
+                      onChange={(e) => setNote(e.target.value)}
+                      placeholder="First priority and why… Evidence needed… Owner… Buffer… Next check-in…"
+                    />
+                  </label>
+                  <button
+                    className="secondary"
+                    disabled={note.trim().length < 20}
+                    onClick={() => saveNote("day-plan")}
+                  >
+                    Save a reasoned day plan
+                  </button>
+                </div>
                 <div className="two-col">
                   <div className="card">
                     <h2>Book a conversation</h2>
@@ -722,10 +949,11 @@ export default function Workbench(props: Props) {
                           className="portrait large"
                           style={{ background: n.color }}
                         >
-                          {n.name
-                            .split(" ")
-                            .map((s) => s[0])
-                            .join("")}
+                          <Portrait
+                            name={n.name}
+                            color={n.color}
+                            mentor={n.id === "npc-mentor"}
+                          />
                         </span>
                         <h2>{n.name}</h2>
                         <span className="badge">{n.role}</span>
@@ -792,6 +1020,11 @@ export default function Workbench(props: Props) {
                     <h2>Case documents</h2>
                     {content.documents
                       .filter((d) => d.accountId === selectedAccount)
+                      .filter(
+                        (d) =>
+                          !d.id.endsWith("-verification") ||
+                          visibleDocuments.has(d.id),
+                      )
                       .map((d) => (
                         <details className="document" key={d.id}>
                           <summary>
@@ -831,11 +1064,21 @@ export default function Workbench(props: Props) {
                     original source IDs.
                   </p>
                 </div>
+                <p className="muted">
+                  Later case responses appear only once their stage is reached
+                  or their evidence is retained. Opening Research does not
+                  create offscreen completed work.
+                </p>
                 <Reconciliation />
                 <div className="card">
                   <h2>Evidence trail</h2>
                   {content.documents
                     .filter((d) => d.accountId === selectedAccount)
+                    .filter(
+                      (d) =>
+                        !d.id.endsWith("-verification") ||
+                        visibleDocuments.has(d.id),
+                    )
                     .slice(0, 4)
                     .map((d) => (
                       <details className="document" key={d.id}>
@@ -1024,7 +1267,14 @@ export default function Workbench(props: Props) {
                         .includes(search.toLowerCase()),
                     )
                     .map((c) => (
-                      <details className="knowledge-card" key={c.id}>
+                      <details
+                        className="knowledge-card"
+                        key={c.id}
+                        onToggle={(event) => {
+                          if (event.currentTarget.open)
+                            recordTeaching("demonstration");
+                        }}
+                      >
                         <summary>
                           <span className="competency-id">{c.id}</span>
                           <div>
@@ -1365,6 +1615,22 @@ export default function Workbench(props: Props) {
                     <article className="card" key={b.session}>
                       <span className="eyebrow">SESSION {b.session}</span>
                       <h2>{b.title}</h2>
+                      <span className="badge">
+                        {
+                          modeDefinitions[getBootcampGuidance(b.session)!.mode]
+                            .label
+                        }
+                      </span>
+                      <p>{getBootcampGuidance(b.session)!.teachFirst}</p>
+                      <details>
+                        <summary>Learn the concept before practicing</summary>
+                        <p>{getBootcampGuidance(b.session)!.demonstration}</p>
+                        <p>{getBootcampGuidance(b.session)!.practice}</p>
+                        <p>
+                          <strong>Done when:</strong>{" "}
+                          {getBootcampGuidance(b.session)!.doneWhen}
+                        </p>
+                      </details>
                       <ul>
                         {b.missionIds.map((id) => (
                           <li key={id}>
@@ -1375,10 +1641,19 @@ export default function Workbench(props: Props) {
                       <button
                         className="secondary"
                         onClick={() => {
+                          const nextId =
+                            b.missionIds.find(
+                              (id) =>
+                                state.missions[id]?.status !== "completed",
+                            ) || b.missionIds[0];
                           const m = content.missions.find(
-                            (m) => m.id === b.missionIds[0],
+                            (m) => m.id === nextId,
                           );
-                          if (m) showMission(m);
+                          if (m)
+                            showMission(
+                              m,
+                              getBootcampGuidance(b.session)!.mode,
+                            );
                         }}
                       >
                         Begin session →
@@ -1431,6 +1706,7 @@ export default function Workbench(props: Props) {
                     <label className="field">
                       Quality
                       <select
+                        aria-label="Quality"
                         value={state.settings.quality}
                         onChange={(e) =>
                           dispatch({
@@ -1947,7 +2223,27 @@ function MissionView({
     [draft, setDraft] = useState(""),
     [reviewed, setReviewed] = useState(false),
     [hint, setHint] = useState(false);
+  const [hintLevel, setHintLevel] = useState(0),
+    [demonstration, setDemonstration] = useState(false);
   const progress = state.missions[mission.id];
+  const guide = getStepGuidance(
+    content,
+    mission.id,
+    step.id,
+    progress?.mode === "replay" ? "guided" : progress?.mode,
+  );
+  const help = (
+    kind: "hint" | "explain" | "demonstration",
+    level?: 1 | 2 | 3,
+  ) =>
+    dispatch({
+      type: "ASSISTANCE",
+      id: uid(),
+      missionId: mission.id,
+      stepId: step.id,
+      kind,
+      ...(level ? { level } : {}),
+    });
   const npc = content.contacts.find((n) => n.id === step.npcId);
   const trace = progress?.attempts.at(-1)?.trace.at(-1);
   const prior = progress?.stepIndex || 0;
@@ -1956,6 +2252,9 @@ function MissionView({
     setValue("");
     setDraft("");
     setReviewed(false);
+    setHint(false);
+    setHintLevel(0);
+    setDemonstration(false);
   }, [step.id]);
   return (
     <div className="mission-workspace">
@@ -2011,13 +2310,111 @@ function MissionView({
           <h2>{step.title}</h2>
           <p>{step.instruction}</p>
         </div>
+        {guide && (
+          <div className="case-coach">
+            <div className="objective-label">
+              MORGAN'S AUTHORED COACHING ·{" "}
+              {
+                modeDefinitions[
+                  progress?.mode === "replay"
+                    ? "guided"
+                    : progress?.mode || "guided"
+                ].label
+              }
+            </div>
+            {guide.automaticTeaching ? (
+              <p>{guide.teach}</p>
+            ) : (
+              <details
+                onToggle={(event) => {
+                  if (event.currentTarget.open) help("explain");
+                }}
+              >
+                <summary>Explain the concept</summary>
+                <p>{guide.teach}</p>
+              </details>
+            )}
+            {guide.automaticTeaching ? (
+              <>
+                <h3>Things to consider</h3>
+                <ul>
+                  {guide.considerations.map((point) => (
+                    <li key={point}>{point}</li>
+                  ))}
+                </ul>
+              </>
+            ) : (
+              <details
+                onToggle={(event) => {
+                  if (event.currentTarget.open) help("explain");
+                }}
+              >
+                <summary>Things to consider</summary>
+                <ul>
+                  {guide.considerations.map((point) => (
+                    <li key={point}>{point}</li>
+                  ))}
+                </ul>
+              </details>
+            )}
+            {guide.terms.length > 0 && (
+              <details
+                onToggle={(event) => {
+                  if (event.currentTarget.open) help("explain");
+                }}
+              >
+                <summary>Explain the terms</summary>
+                <dl>
+                  {guide.terms.map((t) => (
+                    <div key={t.term}>
+                      <dt>{t.term}</dt>
+                      <dd>{t.definition}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </details>
+            )}
+            <button
+              className="secondary"
+              onClick={() => {
+                const level = Math.min(3, hintLevel + 1) as 1 | 2 | 3;
+                setHintLevel(level);
+                help("hint", level);
+              }}
+            >
+              Give me a case hint
+            </button>
+            {hintLevel > 0 && (
+              <p className="mentor-help">
+                Hint {hintLevel}: {guide.hints[hintLevel - 1]}
+              </p>
+            )}
+            <button
+              className="text-button"
+              onClick={() => {
+                help("demonstration", 3);
+                setDemonstration(!demonstration);
+              }}
+            >
+              Demonstrate the approach
+            </button>
+            {demonstration && (
+              <p className="mentor-help">{guide.demonstration}</p>
+            )}
+            <small>
+              Help is recorded with this attempt. An independent attempt using
+              coaching remains assisted practice.
+            </small>
+          </div>
+        )}
         {npc && (
           <div className="npc-dialogue">
             <span className="portrait large" style={{ background: npc.color }}>
-              {npc.name
-                .split(" ")
-                .map((s) => s[0])
-                .join("")}
+              <Portrait
+                name={npc.name}
+                color={npc.color}
+                mentor={npc.id === "npc-mentor"}
+              />
             </span>
             <div>
               <strong>{npc.name}</strong>
@@ -2060,7 +2457,13 @@ function MissionView({
               onChange={(e) => setValue(e.target.value)}
               aria-label="Calculated result"
             />
-            <button className="text-button" onClick={() => setHint((h) => !h)}>
+            <button
+              className="text-button"
+              onClick={() => {
+                help("demonstration", 3);
+                setHint((h) => !h);
+              }}
+            >
               {hint
                 ? "Hide worked example"
                 : "Show worked example (guided study)"}
@@ -2084,7 +2487,11 @@ function MissionView({
               aria-label="Mission work product"
               placeholder="Write your customer explanation or working record…"
             />
-            <details>
+            <details
+              onToggle={(event) => {
+                if (event.currentTarget.open) help("demonstration", 3);
+              }}
+            >
               <summary>Transparent rubric and model comparison</summary>
               <p>{step.modelAnswer}</p>
               <p>
@@ -2227,6 +2634,15 @@ function Debrief({ state, mission }: { state: GameState; mission: Mission }) {
               </div>
             ))}
           </div>
+          <p className="muted">
+            {a.assistance?.length || 0} recorded help actions ·{" "}
+            {a.assistanceVerified === false
+              ? "Historical assistance was not tracked"
+              : a.unaided === true
+                ? "Independent application"
+                : "Learning / assisted practice"}
+            . Original history retained.
+          </p>
           {a.criticalFailures.length > 0 && (
             <p className="critical-text">
               Critical failures: {a.criticalFailures.join("; ")}. Original

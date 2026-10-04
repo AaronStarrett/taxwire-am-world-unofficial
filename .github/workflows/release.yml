@@ -16,7 +16,7 @@ jobs:
       contents: read
       pages: read
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     env:
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.local/browsers
       npm_config_cache: ${{ github.workspace }}/.local/cache/npm

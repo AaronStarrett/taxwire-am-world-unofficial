@@ -17,7 +17,12 @@ import {
 import { formatTime } from "../engine/time";
 import type { GameAction, GameState } from "../engine/types";
 import { getLocationAt, locations } from "../world/locations";
+import { safePosition } from "../world/collision";
+import type { Dispatch, SetStateAction } from "react";
 import Workbench, { type Panel } from "./Workbench";
+import { ObjectivePanel } from "./Guidance";
+import { tutorialObjective } from "../engine/tutorial";
+import { getStepGuidance } from "../content/guidance";
 const World = lazy(() => import("../world/World"));
 export const DISCLAIMER =
   "Unofficial training prototype. Not endorsed by Taxwire. Fictional customers. Educational simulation—not tax advice.";
@@ -49,11 +54,30 @@ function canRender() {
     return false;
   }
 }
+function safeScene(state: GameState): GameState {
+  const position = safePosition(state.position, state.location);
+  if (
+    Math.hypot(position.x - state.position.x, position.z - state.position.z) <
+    0.01
+  )
+    return state;
+  return {
+    ...state,
+    position,
+    notifications: [
+      ...state.notifications,
+      "Your saved position was moved to a safe arrival. Case progress and work history are preserved.",
+    ].slice(-8),
+  };
+}
 export default function App() {
   const [state, setState] = useState<GameState>(() =>
-    createState({ id: "learner-default", displayName: "Learner" }, 20261003),
+    safeScene(
+      createState({ id: "learner-default", displayName: "Learner" }, 20261003),
+    ),
   );
   const [ready, setReady] = useState(false),
+    [saveProtected, setSaveProtected] = useState(false),
     [entered, setEntered] = useState(false),
     [panel, setPanel] = useState<Panel | null>(null),
     [paused, setPaused] = useState(false);
@@ -65,6 +89,17 @@ export default function App() {
     >([]),
     [fps, setFps] = useState(0);
   const [telemetry, setTelemetry] = useState({ drawCalls: 0, triangles: 0 });
+  const [navigation, setNavigation] = useState<{
+    locationId: string;
+    objectId?: string;
+    x?: number;
+    z?: number;
+    label?: string;
+    requestId: number;
+  }>();
+  const [cameraReframe, setCameraReframe] = useState(0);
+  const [requestedGuideLocation, setRequestedGuideLocation] =
+    useState<string>();
   const profileSwitching = useRef(false);
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -110,15 +145,19 @@ export default function App() {
         const known = await listProfiles();
         if (alive) {
           if (saved) {
-            setState(saved);
+            setState(safeScene(saved));
             setName(saved.learner.displayName);
           }
           setProfiles(known);
           setSaveLabel(saved ? "Local save restored" : "Ready to save locally");
         }
-      } catch {
-        if (alive)
-          setSaveLabel("Save recovery: starting safely. Export regularly.");
+      } catch (error) {
+        if (alive) {
+          setSaveProtected(true);
+          setSaveLabel(
+            `Original save retained: ${error instanceof Error ? error.message : "Storage could not be read."}`,
+          );
+        }
       } finally {
         if (alive) setReady(true);
       }
@@ -128,7 +167,7 @@ export default function App() {
     };
   }, []);
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || saveProtected) return;
     setSaveLabel("Saving…");
     const timer = setTimeout(() => {
       saveState(state)
@@ -146,16 +185,16 @@ export default function App() {
         });
     }, 600);
     return () => clearTimeout(timer);
-  }, [state, ready]);
+  }, [state, ready, saveProtected]);
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || saveProtected) return;
     setName(state.learner.displayName);
     try {
       localStorage.setItem("taxwire-am-active-profile", state.learner.id);
     } catch {
       /* Saving remains available through IndexedDB and export. */
     }
-  }, [ready, state.learner.id, state.learner.displayName]);
+  }, [ready, saveProtected, state.learner.id, state.learner.displayName]);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
       const typing =
@@ -183,6 +222,7 @@ export default function App() {
         return;
       }
       const target: Record<string, Panel> = {
+        mentor: "guidance",
         workbench: "inbox",
         missions: "missions",
         research: "research",
@@ -202,6 +242,32 @@ export default function App() {
   );
   const stage = activeStep(state, content),
     mission = content.missions.find((m) => m.id === state.activeMissionId);
+  const firstDay = tutorialObjective(state, content);
+  const attemptMode = mission ? state.missions[mission.id]?.mode : undefined;
+  const caseGuide =
+    mission && stage
+      ? getStepGuidance(
+          content,
+          mission.id,
+          stage.id,
+          attemptMode === "replay" ? "guided" : attemptMode,
+        )
+      : undefined;
+  const freshProfile =
+    state.tutorial.status === "not_started" &&
+    !state.tutorial.legacyOptIn &&
+    state.events.length === 0 &&
+    Object.keys(state.missions).length === 0;
+  const guidanceTarget = firstDay
+    ? {
+        locationId: firstDay.locationId,
+        objectId: firstDay.objectId,
+        label: firstDay.title,
+        ...(firstDay.id === "move" ? { x: -22, z: 22 } : {}),
+      }
+    : caseGuide && state.missions[mission!.id]?.mode === "guided"
+      ? { locationId: caseGuide.locationId, label: caseGuide.interact }
+      : undefined;
   const location = getLocationAt(state.position.x, state.position.z) || {
     name: "Founders Square",
   };
@@ -222,7 +288,7 @@ export default function App() {
     });
     close();
   };
-  const begin = () => {
+  const begin = (guided = false) => {
     setState((s) => ({
       ...s,
       learner: {
@@ -231,17 +297,68 @@ export default function App() {
       },
     }));
     setEntered(true);
+    if (
+      guided &&
+      state.tutorial.status === "not_started" &&
+      !state.tutorial.legacyOptIn
+    ) {
+      dispatch({ type: "TUTORIAL_START", id: uid() });
+    }
     const hash = locationHash();
     if (hash) open(hash);
+  };
+  const showWhere = () => {
+    const destination =
+      guidanceTarget ||
+      (caseGuide
+        ? { locationId: caseGuide.locationId, label: caseGuide.interact }
+        : undefined);
+    if (!destination) {
+      open("academy");
+      return;
+    }
+    setRequestedGuideLocation(destination.locationId);
+    if ((!webgl || state.settings.workbench) && firstDay?.id === "move") {
+      dispatch({ type: "POSITION", x: -22, z: 22, yaw: 0 });
+      dispatch({
+        type: "TUTORIAL_ACT",
+        id: uid(),
+        stepId: "move",
+        choiceId: "use-map-navigation",
+      });
+      return;
+    }
+    if (state.location !== destination.locationId) {
+      open("map");
+      return;
+    }
+    setNavigation({ ...destination, requestId: Date.now() });
+    setPaused(false);
+    close();
+  };
+  const reframe = () => {
+    if (!webgl || state.settings.workbench) {
+      dispatch({ type: "SETTINGS", patch: { workbench: true } });
+      dispatch({
+        type: "TUTORIAL_ACT",
+        id: uid(),
+        stepId: "camera",
+        choiceId: "use-workbench-view",
+      });
+    } else {
+      setCameraReframe((value) => value + 1);
+      close();
+    }
   };
   const changeProfile = async (id: string) => {
     if (profileSwitching.current) return;
     profileSwitching.current = true;
     try {
-      await saveState(stateRef.current);
+      if (!saveProtected) await saveState(stateRef.current);
       const saved = await loadState(id);
       if (saved) {
-        setState(saved);
+        setState(safeScene(saved));
+        setSaveProtected(false);
         setEntered(false);
         close();
       }
@@ -256,14 +373,14 @@ export default function App() {
     if (profileSwitching.current) return;
     profileSwitching.current = true;
     try {
-      await saveState(stateRef.current);
-      const next = createState(
-        { id: uid(), displayName: "New learner" },
-        20261003,
+      if (!saveProtected) await saveState(stateRef.current);
+      const next = safeScene(
+        createState({ id: uid(), displayName: "New learner" }, 20261003),
       );
       await saveState(next);
       setProfiles(await listProfiles());
       setState(next);
+      setSaveProtected(false);
       setEntered(false);
       close();
     } catch {
@@ -273,6 +390,12 @@ export default function App() {
     }
   };
   const reset = async () => {
+    if (saveProtected) {
+      setSaveLabel(
+        "Original save protected. Select a compatible profile or create a new learner first.",
+      );
+      return;
+    }
     if (
       !window.confirm(
         "Reset this local learner? Export first. Original progress in other profiles is retained.",
@@ -280,7 +403,7 @@ export default function App() {
     )
       return;
     await deleteState(state.learner.id);
-    setState(createState(state.learner, state.seed));
+    setState(safeScene(createState(state.learner, state.seed)));
     close();
     setEntered(false);
   };
@@ -330,6 +453,7 @@ export default function App() {
         className="world-shell"
         data-position={`${state.position.x.toFixed(2)},${state.position.z.toFixed(2)},${state.position.yaw.toFixed(2)}`}
         data-clock={state.clockMinutes}
+        data-tutorial-step={firstDay?.id || state.tutorial.status}
       >
         {!ready ? (
           <div className="world-loading">
@@ -355,6 +479,17 @@ export default function App() {
               quality={state.settings.quality}
               reducedMotion={state.settings.reducedMotion}
               cameraSensitivity={state.settings.cameraSensitivity}
+              guidanceTarget={guidanceTarget}
+              navigateTo={navigation}
+              cameraReframe={cameraReframe}
+              conversationFraming={
+                panel === "guidance" &&
+                state.location === "hq" &&
+                (firstDay?.id === "mentor" || firstDay?.id === "desk")
+              }
+              onWorldEvent={(event) =>
+                dispatch({ type: "TUTORIAL_WORLD", id: uid(), event })
+              }
               onInteract={interaction}
               onTravel={(id) => dispatch({ type: "TRAVEL", location: id })}
               onPosition={(position) =>
@@ -410,8 +545,9 @@ export default function App() {
                 <em>Deliver the outcome.</em>
               </h1>
               <p className="welcome-description">
-                Step into a working world. Meet your customers, investigate the
-                details, and become the account owner they can count on.
+                You are an account manager learning to understand customers,
+                coordinate the right people, and keep promises. Morgan Vale will
+                guide your first complete work cycle.
               </p>
               <div className="welcome-chips">
                 <span>↗ Walkable 3D district</span>
@@ -429,10 +565,21 @@ export default function App() {
               </label>
               <button
                 className="primary enter"
-                onClick={begin}
+                onClick={() => begin(freshProfile)}
                 disabled={!ready}
               >
-                Enter your world <span>→</span>
+                {freshProfile
+                  ? "Start your guided first day"
+                  : "Continue your day"}{" "}
+                <span>→</span>
+              </button>
+              {(firstDay || mission) && (
+                <p className="resume-recap">
+                  Next: {firstDay?.title || stage?.title || mission?.title}
+                </p>
+              )}
+              <button className="text-button" onClick={() => begin(false)}>
+                Explore freely
               </button>
               <button
                 className="text-button"
@@ -470,27 +617,14 @@ export default function App() {
                 ↗
               </button>
             </div>
-            <div className="objective-card">
-              <span className="eyebrow">{state.campaignStage}</span>
-              <h2>
-                {mission ? mission.title : "Your first independent chapter"}
-              </h2>
-              <p>
-                {stage
-                  ? stage.title
-                  : "Review your day, choose a learning case, and meet your first customer."}
-              </p>
-              <div className="objective-footer">
-                <span>
-                  {mission
-                    ? `${state.missions[mission.id]?.stepIndex || 0} / ${mission.steps.length} actions`
-                    : "52 playable cases · 24 competencies"}
-                </span>
-                <button onClick={() => open(mission ? "mission" : "missions")}>
-                  {mission ? "Continue case" : "Choose a case"} →
-                </button>
-              </div>
-            </div>
+            <ObjectivePanel
+              key={`${firstDay?.id || stage?.id || "idle"}`}
+              state={state}
+              dispatch={dispatch}
+              open={open}
+              showWhere={showWhere}
+              reframe={reframe}
+            />
             <div className="world-controls">
               <span>
                 <kbd>W A S D</kbd> move
@@ -504,6 +638,13 @@ export default function App() {
               </span>
             </div>
             <nav className="dock" aria-label="World tools">
+              <button
+                onClick={() => open("guidance")}
+                aria-label="First-day guide"
+              >
+                <span>?</span>
+                <small>Guide</small>
+              </button>
               {(
                 [
                   "missions",
@@ -558,7 +699,14 @@ export default function App() {
             close={close}
             state={state}
             dispatch={dispatch}
-            setState={setState}
+            setState={
+              ((update: SetStateAction<GameState>) =>
+                setState((previous) =>
+                  safeScene(
+                    typeof update === "function" ? update(previous) : update,
+                  ),
+                )) as Dispatch<SetStateAction<GameState>>
+            }
             go={go}
             profiles={profiles}
             changeProfile={changeProfile}
@@ -566,6 +714,11 @@ export default function App() {
             reset={reset}
             retryGraphics={() => setWebgl(canRender())}
             telemetry={{ fps, ...telemetry }}
+            showWhere={showWhere}
+            reframe={reframe}
+            guidanceLocation={
+              guidanceTarget?.locationId || requestedGuideLocation
+            }
           />
         )}
       </main>
@@ -591,6 +744,7 @@ export default function App() {
 function locationHash(): Panel | null {
   const hash = window.location.hash.slice(1);
   return [
+    "guidance",
     "missions",
     "mission",
     "map",

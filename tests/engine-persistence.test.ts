@@ -179,7 +179,7 @@ describe("browser-local versioned persistence", () => {
       envelope.checksum = hash(envelope.payload);
     });
     const migrated = await loadState(state.learner.id);
-    expect(migrated?.version).toBe(2);
+    expect(migrated?.version).toBe(3);
     expect(migrated?.specialistCapacity).toEqual({});
     expect(migrated?.notifications.at(-1)).toContain("original saved");
     const database = await request(indexedDB.open("taxwire-am-world-local", 1));
@@ -193,7 +193,7 @@ describe("browser-local versioned persistence", () => {
     expect(JSON.parse(original.payload).version).toBe(1);
   });
   it("rejects unsupported future save versions instead of downgrading", () => {
-    expect(() => migrateState({ ...profile("future"), version: 3 })).toThrow(
+    expect(() => migrateState({ ...profile("future"), version: 4 })).toThrow(
       "never silently downgraded",
     );
   });

@@ -5,7 +5,19 @@ import type {
   Mission,
   Step,
 } from "../content/types";
-import type { Attempt, GameAction, GameState, MissionProgress } from "./types";
+import type {
+  Attempt,
+  AttemptMode,
+  GameAction,
+  GameState,
+  MissionProgress,
+} from "./types";
+import {
+  applyTutorialAction,
+  createTutorial,
+  TUTORIAL_MISSION_ID,
+  tutorialObjective,
+} from "./tutorial";
 import {
   appointmentClock,
   dayAt,
@@ -19,6 +31,7 @@ import {
 export * from "./types";
 export * from "./time";
 export * from "./money";
+export * from "./tutorial";
 export {
   exportProgress,
   previewImport,
@@ -38,7 +51,7 @@ export {
   migrateState,
 } from "./persistence";
 
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 3;
 export const PASS_SCORE = 70;
 export const SCORE_WEIGHTS: Record<Dimension, number> = {
   tax: 25,
@@ -101,6 +114,9 @@ export function createState(
     extensions: {},
     processedActions: [],
     notifications: [],
+    tutorial: createTutorial(),
+    guidanceMode: "guided",
+    assistanceHistory: [],
     campaignStage: "Guided Associate",
   };
 }
@@ -240,6 +256,18 @@ function accepted(state: GameState, action: GameAction): void {
 }
 function syncContent(state: GameState, content: ContentPack): void {
   state.contentVersion = content.version;
+  const revised = Object.entries(state.missions).flatMap(([id, progress]) => {
+    const local = content.missions.find((mission) => mission.id === id);
+    return local &&
+      progress.attempts.some(
+        (attempt) =>
+          attempt.fingerprint !== local.fingerprint ||
+          attempt.version !== local.version,
+      )
+      ? [id]
+      : [];
+  });
+  state.extensions.revisedCaseHistory = revised;
   for (const competency of content.competencies)
     state.competencies[competency.id] ??= {
       id: competency.id,
@@ -254,7 +282,7 @@ function syncContent(state: GameState, content: ContentPack): void {
 function startMission(
   state: GameState,
   mission: Mission,
-  mode: "guided" | "independent" | "replay",
+  mode: AttemptMode,
 ): GameState {
   if (!missionAvailable(state, mission))
     return notify(
@@ -262,9 +290,28 @@ function startMission(
       "Complete the prerequisite missions before this case.",
     );
   const progress = (state.missions[mission.id] ??= newProgress());
-  if (progress.status === "in_progress" && currentAttempt(progress)) {
+  const unfinished = currentAttempt(progress);
+  if (
+    progress.status === "in_progress" &&
+    unfinished &&
+    unfinished.fingerprint === mission.fingerprint &&
+    unfinished.version === mission.version
+  ) {
     state.activeMissionId = mission.id;
     return notify(state, `Resuming ${mission.title}.`);
+  }
+  if (unfinished && progress.status === "in_progress") {
+    unfinished.endedAt = state.clockMinutes;
+    event(
+      state,
+      "case-revision",
+      "The earlier in-progress attempt is retained in history. This explicit start applies the revised visible case facts to a fresh attempt.",
+      mission.id,
+      {
+        previousFingerprint: unfinished.fingerprint,
+        currentFingerprint: mission.fingerprint,
+      },
+    );
   }
   const previous = progress.attempts.at(-1);
   progress.status = "in_progress";
@@ -284,11 +331,15 @@ function startMission(
     fingerprint: mission.fingerprint,
     version: mission.version,
     overdue: false,
+    assistance: [],
+    assistanceVerified: true,
+    unaided: mode === "independent",
     ...(previous?.criticalFailures.length
       ? { remediationOf: previous.id }
       : {}),
   });
   state.activeMissionId = mission.id;
+  if (mode !== "replay") state.guidanceMode = mode;
   for (const id of mission.competencyIds) {
     const competency = state.competencies[id];
     if (competency?.level === "not_started") competency.level = "introduced";
@@ -353,6 +404,12 @@ function completeAttempt(
     attempt.score >= PASS_SCORE &&
     attempt.criticalFailures.length === 0 &&
     outstanding.length === 0;
+  const independentEvidence =
+    attempt.passed &&
+    attempt.mode === "independent" &&
+    attempt.unaided === true &&
+    attempt.assistanceVerified === true &&
+    !attempt.assistance?.length;
   progress.bestScore = Math.max(progress.bestScore, attempt.score);
   progress.criticalFailures = unique([
     ...progress.criticalFailures,
@@ -365,11 +422,8 @@ function completeAttempt(
     competency.attemptCount += 1;
     competency.bestScore = Math.max(competency.bestScore, attempt.score);
     if (competency.level !== "demonstrated")
-      competency.level =
-        attempt.passed && attempt.mode === "independent"
-          ? "demonstrated"
-          : "practiced";
-    if (attempt.passed && attempt.mode === "independent")
+      competency.level = independentEvidence ? "demonstrated" : "practiced";
+    if (independentEvidence)
       competency.evidenceMissionIds = unique([
         ...competency.evidenceMissionIds,
         mission.id,
@@ -397,7 +451,10 @@ function completeAttempt(
       item.status === "completed" &&
       item.attempts.some(
         (attemptItem) =>
-          attemptItem.mode === "independent" && attemptItem.passed,
+          attemptItem.mode === "independent" &&
+          attemptItem.passed &&
+          attemptItem.unaided !== false &&
+          !attemptItem.assistance?.length,
       ),
   ).length;
   state.campaignStage =
@@ -412,13 +469,15 @@ function completeAttempt(
   event(
     state,
     attempt.passed ? "mission-completed" : "remediation-required",
-    `${mission.title}: ${attempt.score}/100. ${attempt.passed ? (attempt.mode === "independent" ? "Independent evidence recorded." : "Learning practice completed.") : "Review and remediate before a passing result."}`,
+    `${mission.title}: ${attempt.score}/100. ${attempt.passed ? (independentEvidence ? "Unaided independent evidence recorded." : "Learning practice completed; assistance does not count as unaided mastery.") : "Review and remediate before a passing result."}`,
     mission.id,
     {
       attemptId: attempt.id,
       dimensions: attempt.dimensions,
       criticalFailures: attempt.criticalFailures,
       mode: attempt.mode,
+      assistanceCount: attempt.assistance?.length ?? 0,
+      unaided: independentEvidence,
     },
   );
   notify(
@@ -445,6 +504,14 @@ function act(
   const choice = step.choices.find((item) => item.id === action.choiceId);
   if (!attempt || !choice)
     return notify(state, "Choose an available authored action.");
+  if (
+    attempt.fingerprint !== mission.fingerprint ||
+    attempt.version !== mission.version
+  )
+    return notify(
+      state,
+      "This case's visible response facts were revised. Your earlier work is preserved; explicitly start the revised case before continuing assessment.",
+    );
   if (step.requiresEvidence?.some((id) => !progress.evidenceIds.includes(id)))
     return notify(
       state,
@@ -679,6 +746,96 @@ export function transition(
   syncContent(state, content);
   if (!rememberAction(state, action)) return state;
   switch (action.type) {
+    case "TUTORIAL_START":
+    case "TUTORIAL_SKIP":
+    case "TUTORIAL_WORLD":
+    case "TUTORIAL_ACT": {
+      accepted(state, action);
+      applyTutorialAction(state, action, content);
+      return state;
+    }
+    case "ASSISTANCE": {
+      const isTutorial =
+        action.missionId === TUTORIAL_MISSION_ID &&
+        tutorialObjective(state, content)?.id === action.stepId;
+      const progress = state.missions[action.missionId];
+      const attempt = progress ? currentAttempt(progress) : undefined;
+      const isCase =
+        state.activeMissionId === action.missionId &&
+        activeStep(state, content)?.id === action.stepId &&
+        !!attempt;
+      if (!isTutorial && !isCase)
+        return notify(
+          state,
+          "Help must refer to your current visible objective or active case step.",
+        );
+      const level = action.level ?? 1;
+      if (
+        ![1, 2, 3].includes(level) ||
+        ![
+          "hint",
+          "explain",
+          "demonstration",
+          "show-location",
+          "stuck",
+          "mode-change",
+        ].includes(action.kind)
+      )
+        return notify(state, "Use an available authored help level.");
+      const record = {
+        id: action.id,
+        missionId: action.missionId,
+        stepId: action.stepId,
+        kind: action.kind,
+        level,
+        clockMinutes: state.clockMinutes,
+        ...(attempt ? { attemptId: attempt.id } : {}),
+      };
+      state.assistanceHistory.push(record);
+      if (attempt && isCase) {
+        attempt.assistance ??= [];
+        attempt.assistance.push(record);
+        attempt.unaided = false;
+      }
+      accepted(state, action);
+      event(
+        state,
+        "authored-assistance",
+        `Authored ${action.kind}, level ${level}, recorded. Help does not advance business time; this attempt is assisted evidence.`,
+        action.missionId,
+        { stepId: action.stepId, level, attemptId: attempt?.id },
+      );
+      return state;
+    }
+    case "SET_GUIDANCE": {
+      if (!["guided", "assisted", "independent"].includes(action.mode))
+        return state;
+      if (state.guidanceMode === action.mode) return state;
+      state.guidanceMode = action.mode;
+      const progress = state.activeMissionId
+        ? state.missions[state.activeMissionId]
+        : undefined;
+      const attempt = progress ? currentAttempt(progress) : undefined;
+      if (attempt?.mode === "independent" && action.mode !== "independent") {
+        const record = {
+          id: `guidance-mode-${state.events.length + 1}`,
+          missionId: state.activeMissionId!,
+          stepId: activeStep(state, content)?.id ?? "case",
+          kind: "mode-change" as const,
+          level: 1 as const,
+          clockMinutes: state.clockMinutes,
+          attemptId: attempt.id,
+        };
+        attempt.assistance ??= [];
+        attempt.assistance.push(record);
+        attempt.unaided = false;
+        state.assistanceHistory.push(record);
+      }
+      return notify(
+        state,
+        "Guidance changed without resetting casework. Requested assistance remains in the assessment history.",
+      );
+    }
     case "START_MISSION": {
       const mission = content.missions.find(
         (item) => item.id === action.missionId,
@@ -713,9 +870,10 @@ export function transition(
       if (!known.has(action.location))
         return notify(state, "Unknown location.");
       if (state.location === action.location) return state;
-      if (!canSpend(state, 10))
+      const studyTravel = state.tutorial.status === "active";
+      if (!studyTravel && !canSpend(state, 10))
         return notify(state, "Close the working day before traveling.");
-      spend(state, 10);
+      if (!studyTravel) spend(state, 10);
       state.location = action.location;
       state.visitedLocations = unique([
         ...state.visitedLocations,
@@ -724,7 +882,7 @@ export function transition(
       event(
         state,
         "travel",
-        `Arrived at ${action.location}; travel used 10 business minutes.`,
+        `Arrived at ${action.location}; ${studyTravel ? "first-day guidance keeps the campaign business clock paused" : "travel used 10 business minutes"}.`,
       );
       return state;
     }
@@ -823,6 +981,7 @@ export function transition(
         undefined,
         { appointmentId: action.id },
       );
+      applyTutorialAction(state, action, content);
       return notify(
         state,
         "Appointment scheduled. Calendar is simulated; no external invitations are sent.",
@@ -910,7 +1069,8 @@ export function transition(
     case "SAVE_NOTE": {
       if (
         (!content.missions.some((item) => item.id === action.missionId) &&
-          action.missionId !== "free-practice") ||
+          action.missionId !== "free-practice" &&
+          action.missionId !== TUTORIAL_MISSION_ID) ||
         !action.body.trim()
       )
         return notify(
@@ -932,6 +1092,7 @@ export function transition(
         action.missionId,
         { artifactId: action.id },
       );
+      applyTutorialAction(state, action, content);
       return notify(
         state,
         "Saved locally. Free text is for self-review against the rubric; it is not expert-graded.",

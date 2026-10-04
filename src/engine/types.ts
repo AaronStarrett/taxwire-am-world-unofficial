@@ -2,7 +2,80 @@ import type { ContentPack, Dimension } from "../content/types";
 
 export type LearningLevel =
   "not_started" | "introduced" | "practiced" | "demonstrated";
-export type AttemptMode = "guided" | "independent" | "replay";
+export type GuidanceMode = "guided" | "assisted" | "independent";
+export type AttemptMode = GuidanceMode | "replay";
+export interface AssistanceRecord {
+  id: string;
+  missionId: string;
+  stepId: string;
+  kind:
+    | "hint"
+    | "explain"
+    | "demonstration"
+    | "show-location"
+    | "stuck"
+    | "mode-change";
+  level: 1 | 2 | 3;
+  clockMinutes: number;
+  attemptId?: string;
+}
+export type TutorialStepId =
+  | "move"
+  | "camera"
+  | "mentor"
+  | "desk"
+  | "inbox"
+  | "calendar"
+  | "accounts"
+  | "journal"
+  | "known-missing"
+  | "owner"
+  | "update"
+  | "followup"
+  | "later-response"
+  | "verify"
+  | "debrief";
+export interface TutorialTrace {
+  id: string;
+  run: number;
+  stepId: TutorialStepId;
+  action: string;
+  accepted: boolean;
+  clockMinutes: number;
+  evidenceIds: string[];
+  message: string;
+  classifications?: Record<string, "known" | "missing">;
+}
+export interface TutorialState {
+  version: 1;
+  status: "not_started" | "active" | "completed" | "skipped";
+  stepIndex: number;
+  run: number;
+  completedStepIds: TutorialStepId[];
+  history: TutorialTrace[];
+  inputMethod: "keyboard" | "pointer" | "touch" | "menu";
+  simulatedMinutes: number;
+  legacyOptIn: boolean;
+  controlOrigin: { x: number; z: number; yaw: number };
+  scenario: {
+    accountId: string;
+    knownIds: string[];
+    missingIds: string[];
+    owner: string;
+    updateArtifactId?: string;
+    followupTaskId?: string;
+    responseId?: string;
+    responseVerified: boolean;
+  };
+}
+export interface TutorialWorldEvent {
+  type: "moved" | "camera" | "interacted" | "target-reached" | "recovered";
+  distance?: number;
+  angle?: number;
+  objectId?: string;
+  locationId?: string;
+  input?: "keyboard" | "pointer" | "touch" | "menu";
+}
 export interface Learner {
   id: string;
   displayName: string;
@@ -32,6 +105,9 @@ export interface Attempt {
   version: number;
   overdue: boolean;
   remediationOf?: string;
+  assistance?: AssistanceRecord[];
+  assistanceVerified?: boolean;
+  unaided?: boolean;
 }
 export interface MissionProgress {
   status: "not_started" | "in_progress" | "completed" | "needs_remediation";
@@ -145,6 +221,9 @@ export interface GameState {
   extensions: Record<string, unknown>;
   processedActions: string[];
   notifications: string[];
+  tutorial: TutorialState;
+  guidanceMode: GuidanceMode;
+  assistanceHistory: AssistanceRecord[];
   campaignStage:
     | "Guided Associate"
     | "Independent Account Owner"
@@ -152,6 +231,29 @@ export interface GameState {
     | "Strategic Account Leader";
 }
 export type GameAction =
+  | { type: "TUTORIAL_START"; id: string; replay?: boolean }
+  | { type: "TUTORIAL_SKIP"; id: string }
+  | { type: "TUTORIAL_WORLD"; id: string; event: TutorialWorldEvent }
+  | {
+      type: "TUTORIAL_ACT";
+      id: string;
+      stepId: TutorialStepId;
+      choiceId: string;
+      selectedIds?: string[];
+      classifications?: Record<string, "known" | "missing">;
+      owner?: string;
+      body?: string;
+      taskId?: string;
+    }
+  | {
+      type: "ASSISTANCE";
+      id: string;
+      missionId: string;
+      stepId: string;
+      kind: AssistanceRecord["kind"];
+      level?: 1 | 2 | 3;
+    }
+  | { type: "SET_GUIDANCE"; mode: GuidanceMode }
   | { type: "START_MISSION"; missionId: string; mode?: AttemptMode }
   | {
       type: "ACT";

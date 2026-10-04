@@ -1,4 +1,8 @@
 import type { Choice, Dimension, Document, Mission, Step } from "./types";
+import {
+  getVerificationRecord,
+  renderVerificationRecord,
+} from "./verifications";
 
 export const documents: Document[] = [];
 const dimensions: Dimension[] = [
@@ -124,7 +128,7 @@ export function createCase(c: CaseSeed): Mission {
     `${c.id}-verification`,
     `${c.title}: verification record`,
     aid,
-    `Fictional later-stage verification: the assigned owner has returned the requested records. ${c.answer} The record is retained with entity, period, source IDs and the reviewer. This is simulated evidence; unresolved legal questions remain specialist-owned, and any actual case requires professional review.`,
+    renderVerificationRecord(c.id),
     c.sources,
     "Fictional verification",
   );
@@ -397,7 +401,7 @@ export function createCase(c: CaseSeed): Mission {
   ];
   return {
     id: c.id,
-    version: 1,
+    version: getVerificationRecord(c.id)?.altersCaseFacts ? 2 : 1,
     title: c.title,
     competencyIds: c.competencyIds,
     accountId: aid,
@@ -406,7 +410,7 @@ export function createCase(c: CaseSeed): Mission {
     briefing: c.briefing,
     facts: c.facts,
     dueMinutes: c.stage === "capstone" ? 960 : 360,
-    fingerprint: `twaw-v1:${c.id}:${c.account}:${c.title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+    fingerprint: `twaw-v1:${c.id}:${c.account}:${c.title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}${getVerificationRecord(c.id)?.altersCaseFacts ? ":response-v2" : ""}`,
     steps,
     consequence: c.why,
     output: c.output,

@@ -4,10 +4,13 @@ import {
   findPath,
   isWalkable,
   moveWithCollision,
+  safePosition,
+  reachableTarget,
   type Collider,
 } from "../src/world/collision";
 import { getLocationAt, locations, localToWorld } from "../src/world/locations";
 import { accounts, contacts } from "../src/content/accounts";
+import { walkingPose } from "../src/world/gait";
 
 describe("walkable training district", () => {
   it("provides eight distinct safe indoor arrivals and wide unobstructed doors", () => {
@@ -85,6 +88,76 @@ describe("walkable training district", () => {
     expect(isWalkable({ x: 40, z: 0 })).toBe(false);
     expect(colliders.length).toBeGreaterThan(80);
     expect(findPath({ x: 0, z: 5 }, { x: 200, z: 0 })).toEqual([]);
+  });
+  it("preserves valid saved positions and repairs invalid geometry positions", () => {
+    const oldSave = { x: 0, z: 5, yaw: 1.3 };
+    expect(safePosition(oldSave, "home")).toEqual(oldSave);
+    for (const location of locations) {
+      const repaired = safePosition(
+        { x: NaN, z: Infinity, yaw: NaN },
+        location.id,
+      );
+      expect(isWalkable(repaired)).toBe(true);
+      expect(getLocationAt(repaired.x, repaired.z)?.id).toBe(location.id);
+      expect(Number.isFinite(repaired.yaw)).toBe(true);
+    }
+    const desk = locations
+      .find((location) => location.id === "hq")!
+      .objects.find((object) => object.id === "workbench")!;
+    expect(isWalkable(desk)).toBe(false);
+    expect(isWalkable(safePosition(desk, "hq"))).toBe(true);
+  });
+  it("puts first-day guidance at the reachable home marker and routes to mentor/workstations", () => {
+    const home = locations.find((location) => location.id === "home")!;
+    const marker = reachableTarget(
+      { locationId: "home", objectId: "first-day-marker", x: -22, z: 22 },
+      home,
+    )!;
+    expect(marker).toMatchObject({
+      x: -22,
+      z: 22,
+      objectId: "first-day-marker",
+    });
+    expect(Math.hypot(marker.x - home.x, marker.z - home.z)).toBeGreaterThan(1);
+    expect(findPath(home, marker).length).toBeGreaterThan(0);
+    for (const location of locations)
+      for (const object of location.objects) {
+        const target = reachableTarget(
+          {
+            locationId: location.id,
+            objectId: object.id,
+            x: object.x,
+            z: object.z,
+          },
+          location,
+        );
+        expect(target, `${location.id}/${object.id}`).toBeDefined();
+        expect(isWalkable(target!)).toBe(true);
+        expect(
+          Math.hypot(target!.x - object.x, target!.z - object.z),
+          `${location.id}/${object.id}: ${target!.x},${target!.z} -> ${object.x},${object.z}`,
+        ).toBeLessThan(2.4);
+      }
+    const mentor = locations
+      .find((location) => location.id === "hq")!
+      .objects.find((object) => object.id === "mentor")!;
+    expect(mentor.contactId).toBe("npc-mentor");
+  });
+  it("keeps stance feet planted while independently clearing the swing foot", () => {
+    const upper = 0.387,
+      lower = 0.355;
+    for (let step = 0; step < 80; step++) {
+      const pose = walkingPose((step / 80) * Math.PI * 2);
+      for (const leg of [pose.left, pose.right]) {
+        const footY =
+          pose.drop -
+          upper * Math.cos(leg.hip) -
+          lower * Math.cos(leg.hip + leg.knee);
+        expect(footY).toBeCloseTo(-0.741 + leg.lift, 3);
+        expect(leg.hip + leg.knee + leg.ankle).toBeCloseTo(0, 8);
+        expect(Number.isFinite(leg.hip)).toBe(true);
+      }
+    }
   });
   it("keeps visible business and NPC identities consistent with the authored campaign", () => {
     for (const id of ["harborworks", "cedarline"])

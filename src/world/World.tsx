@@ -9,14 +9,30 @@ import {
   type ReactNode,
 } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { Group, Mesh, Raycaster, Vector3, MathUtils } from "three";
-import { AvatarModel, type AvatarAppearance } from "./Avatar";
+import {
+  CanvasTexture,
+  Group,
+  Mesh,
+  PerspectiveCamera,
+  Raycaster,
+  SRGBColorSpace,
+  Vector3,
+  MathUtils,
+} from "three";
+import {
+  AvatarModel,
+  type AvatarAppearance,
+  type CharacterMotion,
+} from "./Avatar";
 import { District } from "./Architecture";
 import {
   findPath,
   isWalkable,
   moveWithCollision,
+  reachableTarget,
+  safePosition,
   type Point,
+  type GuidanceTarget,
 } from "./collision";
 import {
   getLocationAt,
@@ -27,6 +43,15 @@ import {
 import "./world.css";
 
 export type WorldPosition = { x: number; z: number; yaw: number };
+export type { GuidanceTarget } from "./collision";
+export type WorldEvent = {
+  type: "moved" | "camera" | "interacted" | "target-reached" | "recovered";
+  distance?: number;
+  angle?: number;
+  objectId?: string;
+  locationId?: string;
+  input?: "keyboard" | "pointer" | "touch" | "menu";
+};
 export type WorldProps = {
   paused: boolean;
   location: string;
@@ -36,6 +61,11 @@ export type WorldProps = {
   quality: "low" | "medium" | "high";
   reducedMotion: boolean;
   cameraSensitivity: number;
+  guidanceTarget?: GuidanceTarget;
+  navigateTo?: GuidanceTarget & { requestId?: number };
+  cameraReframe?: number;
+  conversationFraming?: boolean;
+  onWorldEvent?: (event: WorldEvent) => void;
   onInteract: (objectId: string) => void;
   onTravel: (locationId: string) => void;
   onPosition: (position: WorldPosition) => void;
@@ -46,7 +76,6 @@ export type WorldProps = {
     triangles: number;
   }) => void;
 };
-
 type Controls = {
   keys: Set<string>;
   path: Point[];
@@ -58,6 +87,8 @@ type Controls = {
   pointerY: number;
   interactRequested: boolean;
   recoverRequested: boolean;
+  input: "keyboard" | "pointer" | "touch";
+  cameraAngle: number;
 };
 
 class GraphicsBoundary extends Component<
@@ -91,24 +122,73 @@ function Scene({
   controls: React.RefObject<Controls>;
   onNearby: (object: WorldObject | undefined) => void;
 }) {
-  const player = useRef<Group>(null);
-  const marker = useRef<Group>(null);
-  const current = useRef<WorldPosition>({ ...props.position });
-  const lastEmitted = useRef<WorldPosition>({ ...props.position });
-  const positioned = useRef(false);
+  const player = useRef<Group>(null),
+    nearMarker = useRef<Group>(null),
+    targetMarker = useRef<Group>(null);
+  const current = useRef<WorldPosition>({ ...props.position }),
+    lastEmitted = useRef<WorldPosition>({ ...props.position }),
+    positioned = useRef(false);
   const callbacks = useRef(props);
   callbacks.current = props;
-  const [moving, setMoving] = useState(false);
-  const movingRef = useRef(false);
+  const motion = useRef<CharacterMotion>({ speed: 0, interaction: 0 });
+  const journey = useRef({ moved: 0, targetTravel: 0, reached: false });
   const sample = useRef({ time: 0, frames: 0, ui: 0, position: 0 });
-  const nearby = useRef<WorldObject | undefined>(undefined);
-  const { camera, scene, gl } = useThree();
-  const ray = useMemo(() => new Raycaster(), []);
-  const cameraPoint = useMemo(() => new Vector3(), []);
-  const targetPoint = useMemo(() => new Vector3(), []);
-  const direction = useMemo(() => new Vector3(), []);
+  const nearby = useRef<WorldObject | undefined>(undefined),
+    focusObject = useRef<WorldObject | undefined>(undefined);
+  const { camera, scene, gl, size } = useThree();
+  useEffect(() => {
+    if (!(camera instanceof PerspectiveCamera)) return;
+    if (props.conversationFraming)
+      camera.setViewOffset(
+        size.width,
+        size.height,
+        -0.23 * size.width,
+        0,
+        size.width,
+        size.height,
+      );
+    else camera.clearViewOffset();
+    camera.updateProjectionMatrix();
+    return () => {
+      camera.clearViewOffset();
+      camera.updateProjectionMatrix();
+    };
+  }, [camera, props.conversationFraming, size.width, size.height]);
+  const ray = useMemo(() => new Raycaster(), []),
+    cameraPoint = useMemo(() => new Vector3(), []),
+    targetPoint = useMemo(() => new Vector3(), []),
+    direction = useMemo(() => new Vector3(), []);
+  const sky = useMemo(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 16;
+    canvas.height = 512;
+    const context = canvas.getContext("2d")!;
+    const gradient = context.createLinearGradient(0, 0, 0, 512);
+    gradient.addColorStop(0, "#8eaebb");
+    gradient.addColorStop(0.62, "#d6e1df");
+    gradient.addColorStop(1, "#eef0e5");
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, 16, 512);
+    const texture = new CanvasTexture(canvas);
+    texture.colorSpace = SRGBColorSpace;
+    return texture;
+  }, []);
+  useEffect(() => () => sky.dispose(), [sky]);
   const cameraWalls = useRef<Mesh[]>([]);
-
+  const target = useMemo(
+    () =>
+      props.guidanceTarget
+        ? reachableTarget(props.guidanceTarget, current.current)
+        : undefined,
+    [
+      props.guidanceTarget?.locationId,
+      props.guidanceTarget?.objectId,
+      props.guidanceTarget?.x,
+      props.guidanceTarget?.z,
+      props.guidanceTarget?.label,
+    ],
+  );
+  const previousReframe = useRef(props.cameraReframe ?? 0);
   useEffect(() => {
     const walls: Mesh[] = [];
     scene.traverse((object) => {
@@ -117,70 +197,103 @@ function Scene({
     });
     cameraWalls.current = walls;
   }, [scene]);
-
   useEffect(() => {
-    const handleLoss = (event: Event) => {
+    const loss = (event: Event) => {
       event.preventDefault();
       callbacks.current.onError();
     };
-    gl.domElement.addEventListener("webglcontextlost", handleLoss, false);
-    return () =>
-      gl.domElement.removeEventListener("webglcontextlost", handleLoss, false);
+    gl.domElement.addEventListener("webglcontextlost", loss);
+    return () => gl.domElement.removeEventListener("webglcontextlost", loss);
   }, [gl]);
-
   useEffect(() => {
     const location =
-      locations.find((candidate) => candidate.id === props.location) ??
-      locations[0];
-    // A new location is a fast-travel command. First mount honors a valid saved position.
-    const valid = isWalkable(props.position);
+      locations.find((place) => place.id === props.location) ?? locations[0];
+    const restored = safePosition(props.position, props.location);
     current.current =
-      valid &&
+      isWalkable(props.position) &&
       (!positioned.current ||
         getLocationAt(props.position.x, props.position.z)?.id === location.id)
-        ? { ...props.position }
+        ? restored
         : { x: location.x, z: location.z, yaw: location.rotation };
     positioned.current = true;
     controls.current.path = [];
     controls.current.keys.clear();
-    controls.current.orbit = current.current.yaw;
+    controls.current.orbit = location.rotation + Math.PI;
     if (callbacks.current.showcase) camera.position.set(44, 41, 50);
     else
       camera.position.set(
-        current.current.x - Math.sin(current.current.yaw) * 6,
-        5.8,
-        current.current.z - Math.cos(current.current.yaw) * 6,
+        current.current.x - Math.sin(controls.current.orbit) * 4.25,
+        2.65,
+        current.current.z - Math.cos(controls.current.orbit) * 4.25,
       );
     lastEmitted.current = { ...current.current };
     callbacks.current.onPosition({ ...current.current });
-  }, [props.location]); // Normal save-position echoes must not reset navigation.
-
+  }, [props.location]);
   useEffect(() => {
-    const externalChange =
+    const external =
       Math.hypot(
         props.position.x - lastEmitted.current.x,
         props.position.z - lastEmitted.current.z,
       ) > 0.001 ||
       Math.abs(props.position.yaw - lastEmitted.current.yaw) > 0.001;
-    if (externalChange && isWalkable(props.position)) {
-      current.current = { ...props.position };
-      lastEmitted.current = { ...props.position };
-      controls.current.orbit = props.position.yaw;
+    if (external) {
+      const next = safePosition(props.position, props.location);
+      current.current = next;
+      lastEmitted.current = { ...next };
+      const area = getLocationAt(next.x, next.z);
+      controls.current.orbit = area ? area.rotation + Math.PI : next.yaw;
       controls.current.path = [];
+      if (next.x !== props.position.x || next.z !== props.position.z)
+        callbacks.current.onPosition({ ...next });
     }
   }, [props.position.x, props.position.z, props.position.yaw]);
-
   useEffect(() => {
     if (props.paused) {
       controls.current.keys.clear();
       controls.current.path = [];
-    }
+      motion.current.speed = 0;
+    } else focusObject.current = undefined;
   }, [props.paused]);
-
+  useEffect(() => {
+    journey.current.targetTravel = 0;
+    journey.current.reached = false;
+  }, [
+    props.guidanceTarget?.locationId,
+    props.guidanceTarget?.objectId,
+    props.guidanceTarget?.x,
+    props.guidanceTarget?.z,
+  ]);
+  useEffect(() => {
+    if (!props.navigateTo || props.paused || props.showcase) return;
+    const point = reachableTarget(props.navigateTo, current.current);
+    if (point) {
+      controls.current.path = findPath(current.current, point);
+      controls.current.input = "pointer";
+    }
+  }, [
+    props.navigateTo?.requestId,
+    props.navigateTo?.locationId,
+    props.navigateTo?.objectId,
+    props.navigateTo?.x,
+    props.navigateTo?.z,
+  ]);
+  useEffect(() => {
+    const request = props.cameraReframe ?? 0;
+    if (request === previousReframe.current) return;
+    previousReframe.current = request;
+    if (props.paused || props.showcase) return;
+    controls.current.orbit += 0.32;
+    props.onWorldEvent?.({
+      type: "camera",
+      angle: 0.32,
+      input: "menu",
+      locationId: getLocationAt(current.current.x, current.current.z)?.id,
+    });
+  }, [props.cameraReframe]);
   useFrame((_state, rawDelta) => {
-    const delta = Math.min(rawDelta, 0.06);
-    const input = controls.current;
-    const config = callbacks.current;
+    const delta = Math.min(rawDelta, 0.06),
+      input = controls.current,
+      config = callbacks.current;
     let next = { x: current.current.x, z: current.current.z };
     if (input.recoverRequested) {
       const area =
@@ -188,12 +301,17 @@ function Scene({
         locations.find((place) => place.id === config.location) ??
         locations[0];
       current.current = { x: area.x, z: area.z, yaw: area.rotation };
-      input.orbit = area.rotation;
+      input.orbit = area.rotation + Math.PI;
       input.path = [];
       input.recoverRequested = false;
-      next = { x: current.current.x, z: current.current.z };
+      next = { x: area.x, z: area.z };
       lastEmitted.current = { ...current.current };
       config.onPosition({ ...current.current });
+      config.onWorldEvent?.({
+        type: "recovered",
+        locationId: area.id,
+        input: input.input,
+      });
     }
     let dx = 0,
       dz = 0;
@@ -205,8 +323,8 @@ function Scene({
       Number(input.keys.has("a") || input.keys.has("arrowleft"));
     if (!config.paused && !config.showcase && (forward || horizontal)) {
       input.path = [];
-      const magnitude = Math.hypot(horizontal, forward);
-      const speed = input.keys.has("shift") ? 5.1 : 3.7;
+      const magnitude = Math.hypot(horizontal, forward),
+        speed = input.keys.has("shift") ? 3.3 : 1.8;
       dx =
         ((Math.sin(input.orbit) * forward -
           Math.cos(input.orbit) * horizontal) *
@@ -220,48 +338,82 @@ function Scene({
           delta) /
         magnitude;
     } else if (!config.paused && !config.showcase && input.path.length) {
-      const goal = input.path[0];
-      const length = Math.hypot(goal.x - next.x, goal.z - next.z);
-      if (length < 0.19) input.path.shift();
+      const goal = input.path[0],
+        length = Math.hypot(goal.x - next.x, goal.z - next.z);
+      if (length < 0.15) input.path.shift();
       else {
-        const speed = Math.min(3.7 * delta, length);
+        const speed = Math.min(1.8 * delta, length);
         dx = ((goal.x - next.x) / length) * speed;
         dz = ((goal.z - next.z) / length) * speed;
       }
     }
-    const resolved = moveWithCollision(next, dx, dz);
-    const walking =
-      Math.hypot(resolved.x - next.x, resolved.z - next.z) > 0.002;
-    if (walking !== movingRef.current) {
-      movingRef.current = walking;
-      setMoving(walking);
-    }
+    const resolved = moveWithCollision(next, dx, dz),
+      traveled = Math.hypot(resolved.x - next.x, resolved.z - next.z);
+    const walking = traveled > 0.002;
+    motion.current.speed = delta > 0 ? traveled / delta : 0;
+    motion.current.interaction = Math.max(
+      0,
+      motion.current.interaction - delta * 1.7,
+    );
     if (walking) {
       const yaw = Math.atan2(resolved.x - next.x, resolved.z - next.z);
       const difference = Math.atan2(
         Math.sin(yaw - current.current.yaw),
         Math.cos(yaw - current.current.yaw),
       );
-      current.current.yaw += difference * Math.min(1, delta * 13);
+      current.current.yaw += difference * Math.min(1, delta * 11);
       current.current.x = resolved.x;
       current.current.z = resolved.z;
     }
+    journey.current.moved += traveled;
+    journey.current.targetTravel += traveled;
+    if (journey.current.moved >= 1) {
+      config.onWorldEvent?.({
+        type: "moved",
+        distance: journey.current.moved,
+        locationId: getLocationAt(resolved.x, resolved.z)?.id,
+        input: input.input,
+      });
+      journey.current.moved = 0;
+    }
+    if (target && targetMarker.current) {
+      targetMarker.current.visible = !config.showcase;
+      targetMarker.current.position.set(target.x, 0.09, target.z);
+      const arrived =
+        Math.hypot(resolved.x - target.x, resolved.z - target.z) < 0.6;
+      if (
+        arrived &&
+        journey.current.targetTravel >= 1 &&
+        !journey.current.reached &&
+        !config.paused
+      ) {
+        journey.current.reached = true;
+        lastEmitted.current = { ...current.current };
+        config.onPosition({ ...current.current });
+        config.onWorldEvent?.({
+          type: "target-reached",
+          objectId: target.objectId,
+          locationId: target.locationId,
+          distance: journey.current.targetTravel,
+          input: input.input,
+        });
+      }
+    } else if (targetMarker.current) targetMarker.current.visible = false;
     if (player.current) {
-      player.current.position.set(current.current.x, 0.05, current.current.z);
+      player.current.position.set(current.current.x, 0.055, current.current.z);
       player.current.rotation.y = current.current.yaw;
     }
-
     sample.current.ui += delta;
     sample.current.position += delta;
     if (sample.current.ui > 0.1) {
       sample.current.ui = 0;
       let closest: WorldObject | undefined;
-      let distance = 2.7;
-      const playerArea = getLocationAt(current.current.x, current.current.z);
+      let distance = 2.4;
+      const area = getLocationAt(current.current.x, current.current.z);
       for (const object of worldObjects) {
-        if (object.kind !== "portal" && !playerArea?.objects.includes(object))
+        if (object.kind !== "portal" && !area?.objects.includes(object))
           continue;
-        if (object.kind === "portal" && playerArea?.id === object.id.slice(7))
+        if (object.kind === "portal" && area?.id === object.id.slice(7))
           continue;
         const candidate = Math.hypot(
           object.x - current.current.x,
@@ -271,6 +423,33 @@ function Scene({
           closest = object;
           distance = candidate;
         }
+      }
+      // A requested desk may be next to a colleague. Preserve the explicit guidance intent within genuine interaction range.
+      if (
+        config.guidanceTarget?.objectId &&
+        config.guidanceTarget.locationId === area?.id
+      ) {
+        const requested = area.objects
+          .filter((object) => object.id === config.guidanceTarget!.objectId)
+          .sort(
+            (a, b) =>
+              Math.hypot(
+                a.x - (config.guidanceTarget!.x ?? a.x),
+                a.z - (config.guidanceTarget!.z ?? a.z),
+              ) -
+              Math.hypot(
+                b.x - (config.guidanceTarget!.x ?? b.x),
+                b.z - (config.guidanceTarget!.z ?? b.z),
+              ),
+          )[0];
+        if (
+          requested &&
+          Math.hypot(
+            requested.x - current.current.x,
+            requested.z - current.current.z,
+          ) < 2.4
+        )
+          closest = requested;
       }
       nearby.current = closest;
       onNearby(closest);
@@ -284,15 +463,13 @@ function Scene({
         );
         if (destination) {
           input.path = [];
-          // New-district travel is confirmed by the shared engine through the location prop.
-          // Re-entering the currently designated room needs no business-time travel action.
           if (destination.id === config.location) {
             current.current = {
               x: destination.x,
               z: destination.z,
               yaw: destination.rotation,
             };
-            input.orbit = destination.rotation;
+            input.orbit = destination.rotation + Math.PI;
             lastEmitted.current = { ...current.current };
             config.onPosition({ ...current.current });
           }
@@ -300,32 +477,80 @@ function Scene({
         }
       } else if (object) {
         input.path = [];
+        motion.current.interaction = 1;
+        focusObject.current = object;
         config.onInteract(object.id);
+        config.onWorldEvent?.({
+          type: "interacted",
+          objectId: object.id,
+          locationId: getLocationAt(current.current.x, current.current.z)?.id,
+          input: input.input,
+        });
       }
     }
-    if (marker.current) {
-      marker.current.visible =
+    if (nearMarker.current) {
+      nearMarker.current.visible =
         Boolean(nearby.current) && !config.paused && !config.showcase;
       if (nearby.current)
-        marker.current.position.set(nearby.current.x, 0.07, nearby.current.z);
+        nearMarker.current.position.set(
+          nearby.current.x,
+          0.073,
+          nearby.current.z,
+        );
     }
-    targetPoint.set(current.current.x, 1.13, current.current.z);
-    const distance = 7.2;
+    if (!config.paused && motion.current.interaction === 0)
+      focusObject.current = undefined;
+    targetPoint.set(
+      current.current.x + Math.sin(input.orbit) * 0.55,
+      1.18,
+      current.current.z + Math.cos(input.orbit) * 0.55,
+    );
     cameraPoint.set(
-      current.current.x - Math.sin(input.orbit) * distance,
-      1.13 + Math.sin(input.pitch) * distance,
-      current.current.z - Math.cos(input.orbit) * distance,
+      current.current.x - Math.sin(input.orbit) * 4.25,
+      1.25 + Math.sin(input.pitch) * 4.25,
+      current.current.z - Math.cos(input.orbit) * 4.25,
     );
     direction.copy(cameraPoint).sub(targetPoint);
     const desiredDistance = direction.length();
     direction.normalize();
     ray.set(targetPoint, direction);
     ray.far = desiredDistance;
-    const obstruction = ray.intersectObjects(cameraWalls.current, false)[0];
+    const obstruction = ray.intersectObjects(
+      cameraWalls.current.filter((wall) => {
+        let parent = wall.parent;
+        while (parent) {
+          if (!parent.visible) return false;
+          parent = parent.parent;
+        }
+        return true;
+      }),
+      false,
+    )[0];
     if (obstruction)
       cameraPoint
         .copy(targetPoint)
-        .addScaledVector(direction, Math.max(1.2, obstruction.distance - 0.22));
+        .addScaledVector(direction, Math.max(1.5, obstruction.distance - 0.18));
+    const conversationPerson =
+      focusObject.current?.kind === "npc"
+        ? focusObject.current
+        : config.conversationFraming
+          ? getLocationAt(current.current.x, current.current.z)?.objects.find(
+              (object) => object.id === "mentor",
+            )
+          : undefined;
+    if (conversationPerson && config.paused) {
+      const object = conversationPerson,
+        yaw = Math.atan2(
+          object.x - current.current.x,
+          object.z - current.current.z,
+        );
+      targetPoint.set(object.x, 1.51, object.z);
+      cameraPoint.set(
+        current.current.x - Math.sin(yaw + 0.22) * 1.7,
+        1.86,
+        current.current.z - Math.cos(yaw + 0.22) * 1.7,
+      );
+    }
     if (config.showcase) {
       targetPoint.set(0, 0.7, 0);
       cameraPoint.set(44, 41, 50);
@@ -361,7 +586,6 @@ function Scene({
       sample.current.frames = 0;
     }
   });
-
   const navigate = useCallback((x: number, z: number) => {
     if (
       callbacks.current.paused ||
@@ -370,51 +594,78 @@ function Scene({
     )
       return;
     controls.current.path = findPath(current.current, { x, z });
+    controls.current.input = "pointer";
   }, []);
   return (
     <>
-      <color attach="background" args={["#c8dcd6"]} />
+      <primitive attach="background" object={sky} />
       <fog
         attach="fog"
         args={[
-          "#c8dcd6",
-          props.showcase ? 100 : 45,
-          props.showcase ? 170 : 108,
+          "#d6e1df",
+          props.showcase ? 145 : 70,
+          props.showcase ? 200 : 155,
         ]}
       />
-      <ambientLight intensity={1.3} />
-      <hemisphereLight args={["#ebf3ef", "#9ba98a", 1.2]} />
+      <ambientLight intensity={0.38} />
+      <hemisphereLight args={["#dce9f1", "#a7a28f", 0.78]} />
       <directionalLight
         position={[-25, 38, 18]}
-        intensity={2.1}
-        castShadow={props.quality === "high"}
-        shadow-mapSize-width={1024}
-        shadow-mapSize-height={1024}
+        intensity={2.25}
+        castShadow={props.quality !== "low"}
+        shadow-mapSize-width={props.quality === "high" ? 2048 : 1024}
+        shadow-mapSize-height={props.quality === "high" ? 2048 : 1024}
         shadow-camera-left={-42}
         shadow-camera-right={42}
         shadow-camera-top={42}
         shadow-camera-bottom={-42}
         shadow-camera-far={100}
-        shadow-bias={-0.002}
+        shadow-bias={-0.0007}
+        shadow-normalBias={0.045}
+        shadow-radius={3}
       />
-      <District onGroundClick={navigate} />
+      <directionalLight
+        position={[14, 12, -25]}
+        intensity={0.42}
+        color="#c6dce9"
+      />
+      <District
+        onGroundClick={navigate}
+        position={current}
+        showcase={props.showcase}
+      />
       <group ref={player}>
         <AvatarModel
           appearance={props.avatar}
-          moving={moving}
+          motion={motion}
           reducedMotion={props.reducedMotion}
+          paused={props.paused}
         />
       </group>
-      <group ref={marker} visible={false}>
+      <group ref={nearMarker} visible={false}>
         <mesh rotation={[-Math.PI / 2, 0, 0]}>
-          <ringGeometry args={[1.17, 1.24, 32]} />
-          <meshBasicMaterial color="#f3b958" transparent opacity={0.9} />
+          <ringGeometry args={[0.72, 0.75, 48]} />
+          <meshBasicMaterial color="#e2c68a" transparent opacity={0.72} />
+        </mesh>
+      </group>
+      <group ref={targetMarker} visible={false}>
+        <mesh rotation={[-Math.PI / 2, 0, 0]}>
+          <ringGeometry args={[0.35, 0.41, 48]} />
+          <meshBasicMaterial color="#d4ad63" transparent opacity={0.94} />
+        </mesh>
+        <mesh position={[0, 0.07, 0]}>
+          <sphereGeometry args={[0.075, 24, 16]} />
+          <meshStandardMaterial
+            color="#d4b76b"
+            emissive="#cab36e"
+            emissiveIntensity={0.13}
+            roughness={0.4}
+          />
         </mesh>
       </group>
     </>
   );
 }
-
 function isTypingTarget(target: EventTarget | null) {
   return (
     target instanceof HTMLElement &&
@@ -428,13 +679,15 @@ export default function World(props: WorldProps) {
     keys: new Set(),
     path: [],
     orbit: props.position.yaw,
-    pitch: 0.58,
+    pitch: 0.28,
     dragging: false,
     dragMoved: false,
     pointerX: 0,
     pointerY: 0,
     interactRequested: false,
     recoverRequested: false,
+    input: "keyboard",
+    cameraAngle: 0,
   });
   const [nearby, setNearby] = useState<WorldObject | undefined>();
   const state = useRef(props);
@@ -442,7 +695,12 @@ export default function World(props: WorldProps) {
   useEffect(() => {
     const input = controls.current;
     const down = (event: KeyboardEvent) => {
-      if (state.current.paused || isTypingTarget(event.target)) return;
+      if (
+        state.current.paused ||
+        state.current.showcase ||
+        isTypingTarget(event.target)
+      )
+        return;
       const key = event.key.toLowerCase();
       if (
         [
@@ -459,6 +717,7 @@ export default function World(props: WorldProps) {
       ) {
         event.preventDefault();
         input.keys.add(key);
+        input.input = "keyboard";
       }
       if (key === "e" && !event.repeat) input.interactRequested = true;
       if (key === "r" && !event.repeat) input.recoverRequested = true;
@@ -472,13 +731,13 @@ export default function World(props: WorldProps) {
     const pointerRelease = () => {
       input.dragging = false;
     };
+    const visibility = () => {
+      if (document.hidden) release();
+    };
     window.addEventListener("keydown", down);
     window.addEventListener("keyup", up);
     window.addEventListener("blur", release);
     window.addEventListener("pointerup", pointerRelease);
-    const visibility = () => {
-      if (document.hidden) release();
-    };
     document.addEventListener("visibilitychange", visibility);
     return () => {
       window.removeEventListener("keydown", down);
@@ -500,13 +759,15 @@ export default function World(props: WorldProps) {
   const moveButton = (key: string) => ({
     onPointerDown: (event: React.PointerEvent<HTMLButtonElement>) => {
       event.stopPropagation();
-      // Synthetic events and browsers that have already released a pointer cannot capture it.
       try {
         event.currentTarget.setPointerCapture(event.pointerId);
       } catch {
-        /* Movement still has pointer-up/blur release. */
+        /* Inactive synthetic pointer has no capture. */
       }
-      if (!state.current.paused) controls.current.keys.add(key);
+      if (!state.current.paused) {
+        controls.current.keys.add(key);
+        controls.current.input = "touch";
+      }
     },
     onPointerUp: (event: React.PointerEvent<HTMLButtonElement>) => {
       event.stopPropagation();
@@ -519,6 +780,7 @@ export default function World(props: WorldProps) {
     <div
       className={`am-world ${props.paused ? "is-paused" : ""}`}
       data-testid="world"
+      data-guidance-target={props.guidanceTarget?.objectId ?? ""}
       onContextMenu={(event) => event.preventDefault()}
       onPointerDown={(event) => {
         if (
@@ -544,12 +806,23 @@ export default function World(props: WorldProps) {
             0.2,
             3,
           );
+          const before = input.pitch;
           input.orbit -= dx * 0.006 * sensitivity;
           input.pitch = MathUtils.clamp(
             input.pitch + dy * 0.004 * sensitivity,
-            0.2,
-            0.9,
+            0.12,
+            0.64,
           );
+          input.cameraAngle +=
+            Math.abs(dx * 0.006 * sensitivity) + Math.abs(input.pitch - before);
+          if (input.cameraAngle >= 0.15) {
+            props.onWorldEvent?.({
+              type: "camera",
+              angle: input.cameraAngle,
+              input: event.pointerType === "touch" ? "touch" : "pointer",
+            });
+            input.cameraAngle = 0;
+          }
         }
         input.pointerX = event.clientX;
         input.pointerY = event.clientY;
@@ -557,20 +830,16 @@ export default function World(props: WorldProps) {
     >
       <GraphicsBoundary onError={props.onError}>
         <Canvas
-          shadows={props.quality === "high"}
+          shadows={props.quality !== "low"}
           dpr={
             props.quality === "low"
               ? 1
               : props.quality === "medium"
-                ? [1, 1.35]
-                : [1, 1.7]
+                ? [1, 1.25]
+                : [1, 1.6]
           }
-          gl={{
-            antialias: props.quality !== "low",
-            alpha: false,
-            powerPreference: "default",
-          }}
-          camera={{ fov: 50, near: 0.1, far: 170 }}
+          gl={{ antialias: true, alpha: false, powerPreference: "default" }}
+          camera={{ fov: 52, near: 0.08, far: 200 }}
           fallback={
             <div className="world-graphics-fallback">
               Your browser cannot open the 3D view. Use the accessible
@@ -578,7 +847,8 @@ export default function World(props: WorldProps) {
             </div>
           }
           onCreated={({ gl }) => {
-            gl.setClearColor("#c8dcd6");
+            gl.setClearColor("#aebfc3");
+            gl.toneMappingExposure = 1.05;
           }}
         >
           <Scene props={props} controls={controls} onNearby={nearbyUpdate} />
@@ -621,11 +891,16 @@ export default function World(props: WorldProps) {
           className="world-interact"
           onClick={() => {
             controls.current.interactRequested = true;
+            controls.current.input = "pointer";
           }}
           aria-label={`Interact: ${nearby.label}`}
         >
           <kbd>E</kbd>
-          <span>{nearby.label}</span>
+          <span>
+            {nearby.id === "mentor"
+              ? "Talk to Morgan Vale · your mentor"
+              : nearby.label}
+          </span>
           <span aria-hidden="true">↗</span>
         </button>
       )}

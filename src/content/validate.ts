@@ -117,6 +117,31 @@ export function validateContent(pack: ContentPack): string[] {
       )
     )
       errors.push(`Orphan document ${d.id}`);
+    if (d.kind === "Fictional verification") {
+      for (const field of [
+        "Supported conclusion:",
+        "Cannot conclude:",
+        "Owned residual work:",
+        "Checkpoint:",
+      ])
+        if (!d.body.includes(field))
+          errors.push(`Document ${d.id}: returned evidence missing ${field}`);
+      const owner = d.body.match(
+        /Owned residual work:[^\n]*\((?:[^\n]*;\s*)?(npc-[\w-]+)\)/,
+      )?.[1];
+      if (!owner || !contacts.has(owner))
+        errors.push(
+          `Document ${d.id}: returned evidence needs a valid named residual owner`,
+        );
+      const findings = d.body
+        .split("Supported conclusion:")[0]
+        .split("\n")
+        .filter((line) => /^[A-Z][A-Z0-9-]+: .{30,}/.test(line));
+      if (findings.length < 2)
+        errors.push(
+          `Document ${d.id}: returned evidence needs two identified findings`,
+        );
+    }
   }
   for (const m of pack.missions) {
     refs(`Mission ${m.id} account`, [m.accountId], accounts);

@@ -88,6 +88,19 @@ export const colliders: Collider[] = locations.flatMap((location) => {
   if (location.id === "home")
     extras.push(localBox(-3.7, 2.8, 2.6, 1.1), localBox(3.6, 2.9, 2.4, 1.2));
   if (location.id === "hq") extras.push(localBox(1.8, -0.2, 0.1, 4.2));
+  if (location.id === "hq") extras.push(localBox(0, -4.13, 3.15, 0.66));
+  if (location.id === "operations")
+    extras.push(
+      localBox(-3.8, -4.48, 2.35, 0.45),
+      localBox(3.8, -4.48, 2.35, 0.45),
+      localBox(4.9, 3.5, 1.1, 0.65),
+    );
+  if (location.id === "cedarline")
+    extras.push(
+      localBox(-5.64, 1.7, 0.45, 2.35),
+      localBox(-5.64, -1.5, 0.45, 2.35),
+      localBox(4.7, 2.9, 1.6, 1.15),
+    );
   if (location.id === "harborworks")
     extras.push(localBox(-5.2, -2.5, 0.75, 0.85));
   if (location.id === "cafe")
@@ -99,6 +112,88 @@ export const colliders: Collider[] = locations.flatMap((location) => {
     );
   return [...walls, ...furniture, ...chairs, ...extras];
 });
+
+export type GuidanceTarget = {
+  locationId: string;
+  objectId?: string;
+  x?: number;
+  z?: number;
+  label?: string;
+};
+
+/** Preserve any valid old save position; repair only invalid/out-of-bounds positions to an existing safe arrival. */
+export function safePosition(
+  position: Point & { yaw?: number },
+  locationId = "home",
+): { x: number; z: number; yaw: number } {
+  if (isWalkable(position))
+    return {
+      x: position.x,
+      z: position.z,
+      yaw: Number.isFinite(position.yaw) ? position.yaw! : 0,
+    };
+  const location =
+    locations.find((place) => place.id === locationId) ?? locations[0];
+  return { x: location.x, z: location.z, yaw: location.rotation };
+}
+
+/** Work desks/NPC centers are solid. Guidance points at a reachable approach, never inside furniture. */
+export function reachableTarget(
+  target: GuidanceTarget,
+  start: Point,
+):
+  | (Point & { objectId?: string; locationId: string; label?: string })
+  | undefined {
+  const location = locations.find((place) => place.id === target.locationId);
+  if (!location) return undefined;
+  const object = location.objects.find(
+    (candidate) => candidate.id === target.objectId,
+  );
+  const explicit = Number.isFinite(target.x) && Number.isFinite(target.z);
+  const center = explicit
+    ? { x: target.x!, z: target.z! }
+    : (object ?? location);
+  const safeStart = safePosition(start, location.id);
+  const candidates: Point[] = [];
+  if (isWalkable(center)) candidates.push(center);
+  if (object)
+    for (const radius of [1.3, 1.8, 2.15])
+      for (let i = 0; i < 16; i++)
+        candidates.push({
+          x: center.x + Math.sin((i / 16) * Math.PI * 2) * radius,
+          z: center.z + Math.cos((i / 16) * Math.PI * 2) * radius,
+        });
+  candidates.sort(
+    (a, b) =>
+      Math.hypot(a.x - safeStart.x, a.z - safeStart.z) -
+      Math.hypot(b.x - safeStart.x, b.z - safeStart.z),
+  );
+  const point = candidates.find(
+    (candidate) =>
+      isWalkable(candidate) &&
+      getPlace(candidate, location.id) &&
+      findPath(safeStart, candidate).length > 0,
+  );
+  return point
+    ? {
+        ...point,
+        locationId: location.id,
+        objectId: target.objectId,
+        label: target.label ?? object?.label ?? location.name,
+      }
+    : undefined;
+}
+function getPlace(point: Point, locationId: string) {
+  const location = locations.find((place) => place.id === locationId)!;
+  const local = localToWorld(
+    point.x - location.centerX,
+    point.z - location.centerZ,
+    0,
+    0,
+    -location.rotation,
+  );
+  return Math.abs(local.x) < 5.6 && Math.abs(local.z) < 4.7;
+}
 
 // Planters border the central square, leaving wide paved approaches open.
 for (const x of [-7.5, 7.5])

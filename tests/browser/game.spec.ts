@@ -15,12 +15,13 @@ test.beforeAll(async () => {
       headless: true,
       ...(process.platform === "win32" ? { channel: "chrome" } : {}),
       viewport: { width: 1280, height: 720 },
-      recordVideo: process.env.CI
-        ? undefined
-        : {
-            dir: resolve(".local/evidence/recordings"),
-            size: { width: 1280, height: 720 },
-          },
+      recordVideo:
+        process.env.RECORD_GAMEPLAY === "1"
+          ? {
+              dir: resolve(".local/evidence/recordings"),
+              size: { width: 1280, height: 720 },
+            }
+          : undefined,
       acceptDownloads: true,
       downloadsPath: resolve(".local/exports"),
       args: [
@@ -57,17 +58,17 @@ test.afterEach(async ({ browserName: _browserName }, info) => {
 test.afterAll(async () => {
   if (context) await context.close();
 });
-test("loads original world and enters with visible unofficial disclaimer", async () => {
+test("loads revised world and enters with visible unofficial disclaimer", async () => {
   await page.goto(process.env.TEST_BASE_URL || "http://127.0.0.1:4173/");
   await expect(
-    page.getByRole("button", { name: /Enter your world/ }),
+    page.getByRole("button", { name: /Explore freely/ }),
   ).toBeEnabled();
   await expect(page.locator(".disclaimer")).toBeVisible();
   await expect(page.locator("canvas")).toBeVisible();
   await page.screenshot({ path: resolve(evidence, "welcome.png") });
-  await page.getByRole("button", { name: /Enter your world/ }).click();
+  await page.getByRole("button", { name: /Explore freely/ }).click();
   await expect(
-    page.getByRole("button", { name: /Choose a case/ }),
+    page.getByRole("button", { name: "Cases", exact: true }),
   ).toBeVisible();
   await page.screenshot({ path: resolve(evidence, "home-world.png") });
 });
@@ -91,7 +92,7 @@ test("movement, wall collision, drag camera, typing focus and meaningful desk in
   const clockBefore = await page
     .locator("#world-shell")
     .getAttribute("data-clock");
-  await page.keyboard.down("s");
+  await page.keyboard.down("w");
   let previousPosition = "",
     stableSamples = 0;
   await expect
@@ -113,7 +114,7 @@ test("movement, wall collision, drag camera, typing focus and meaningful desk in
     .locator("#world-shell")
     .getAttribute("data-position");
   await page.waitForTimeout(1000);
-  await page.keyboard.up("s");
+  await page.keyboard.up("w");
   expect(await page.locator("#world-shell").getAttribute("data-position")).toBe(
     wallPosition,
   );
@@ -165,7 +166,7 @@ test("world transition, source desk and save/reload persist state", async () => 
     .locator("#world-shell")
     .getAttribute("data-position");
   await page.reload();
-  await page.getByRole("button", { name: /Enter your world/ }).click();
+  await page.getByRole("button", { name: /Explore freely/ }).click();
   await expect(
     page.getByText("Account operations", { exact: true }),
   ).toBeVisible();
@@ -185,7 +186,7 @@ test("complete vertical slice using research, meeting, evidence, specialist, upd
         "Saved in this browser",
       );
       await page.reload();
-      await page.getByRole("button", { name: /Enter your world/ }).click();
+      await page.getByRole("button", { name: /Explore freely/ }).click();
       await expect(page.locator(".step-heading h2")).toHaveText(step.title);
     }
     const best = [...step.choices]
@@ -331,7 +332,7 @@ test("direct hash navigation, assets and rendering measurement", async () => {
   const base = process.env.TEST_BASE_URL || "http://127.0.0.1:4173/";
   await page.goto(base + "#knowledge");
   await page.reload();
-  await page.getByRole("button", { name: /Enter your world/ }).click();
+  await page.getByRole("button", { name: /Explore freely/ }).click();
   await expect(
     page.getByRole("heading", { name: "Learn it. Then put it to work." }),
   ).toBeVisible();
@@ -379,10 +380,10 @@ test("selected profiles resume on refresh and switching flushes recent work", as
     .click();
   await page.getByRole("button", { name: "Create another learner" }).click();
   await expect(
-    page.getByRole("button", { name: /Enter your world/ }),
+    page.getByRole("button", { name: /Explore freely/ }),
   ).toBeVisible();
   await page.getByLabel("Learner display name").fill("Practice Two");
-  await page.getByRole("button", { name: /Enter your world/ }).click();
+  await page.getByRole("button", { name: /Explore freely/ }).click();
   await page.keyboard.press("j");
   await page
     .getByRole("textbox", { name: "Journal note" })
@@ -396,7 +397,7 @@ test("selected profiles resume on refresh and switching flushes recent work", as
     .locator(".profile-button")
     .filter({ hasText: /^Learner$/ })
     .click();
-  await page.getByRole("button", { name: /Enter your world/ }).click();
+  await page.getByRole("button", { name: /Explore freely/ }).click();
   await page.getByRole("button", { name: "Cases", exact: true }).click();
   await expect(
     page.locator('.mission-card[data-case-id="M-T01"]'),
@@ -416,7 +417,7 @@ test("selected profiles resume on refresh and switching flushes recent work", as
   await expect(page.getByLabel("Learner display name")).toHaveValue(
     "Practice Two",
   );
-  await page.getByRole("button", { name: /Enter your world/ }).click();
+  await page.getByRole("button", { name: /Explore freely/ }).click();
   await page.keyboard.press("j");
   await page
     .locator("details.document")
