@@ -35,8 +35,8 @@ test.beforeAll(async () => {
     },
   );
   page = await context.newPage();
-  page.setDefaultTimeout(15000);
-  page.setDefaultNavigationTimeout(30000);
+  page.setDefaultTimeout(process.env.CI ? 60000 : 15000);
+  page.setDefaultNavigationTimeout(process.env.CI ? 60000 : 30000);
   page.on("pageerror", (e) => failures.push(e.message));
   page.on("response", (r) => {
     if (
@@ -48,6 +48,10 @@ test.beforeAll(async () => {
 });
 test.afterEach(async ({ browserName: _browserName }, info) => {
   if (info.status !== info.expectedStatus && page && !page.isClosed()) {
+    console.log(
+      "World failure position:",
+      await page.locator("#world-shell").getAttribute("data-position"),
+    );
     await page.screenshot({ path: resolve(evidence, "failure.png") });
     await writeFile(
       resolve(evidence, "failure-dom.txt"),

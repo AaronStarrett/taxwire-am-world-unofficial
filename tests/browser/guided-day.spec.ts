@@ -60,7 +60,7 @@ test.beforeAll(async () => {
     },
   );
   page = await context.newPage();
-  page.setDefaultTimeout(20000);
+  page.setDefaultTimeout(process.env.CI ? 60000 : 20000);
   page.on("pageerror", (error) => errors.push(error.message));
   page.on("response", (response) => {
     if (response.url().startsWith(base) && response.status() >= 400)
@@ -69,6 +69,12 @@ test.beforeAll(async () => {
 });
 test.afterEach(async ({ browserName: _name }, info) => {
   if (info.status !== info.expectedStatus) {
+    console.log(
+      "Guided failure position:",
+      await page.locator("#world-shell").getAttribute("data-position"),
+      "step:",
+      await page.locator("#world-shell").getAttribute("data-tutorial-step"),
+    );
     await page.screenshot({ path: resolve(evidence, "guided-failure.png") });
     await writeFile(
       resolve(evidence, "guided-failure-dom.txt"),

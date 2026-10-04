@@ -9,8 +9,9 @@ export default defineConfig({
         "hosted-transfer.spec.ts",
       ]
     : ["game.spec.ts", "guided-day.spec.ts", "compatibility.spec.ts"],
-  timeout: 120000,
-  expect: { timeout: 15000 },
+  // CI renders the complete world in software; retain all predicates with bounded frame time.
+  timeout: process.env.CI ? 360000 : 120000,
+  expect: { timeout: process.env.CI ? 60000 : 15000 },
   workers: 1,
   fullyParallel: false,
   retries: 0,
