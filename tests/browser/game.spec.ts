@@ -110,6 +110,15 @@ test("movement, wall collision, drag camera, typing focus and meaningful desk in
   await expect
     .poll(
       async () => {
+        // Observe two real frames so a slow renderer's unchanged UI is not mistaken for a wall stop.
+        await page.evaluate(
+          () =>
+            new Promise<void>((resolveResult) =>
+              requestAnimationFrame(() =>
+                requestAnimationFrame(() => resolveResult()),
+              ),
+            ),
+        );
         const position = (await page
           .locator("#world-shell")
           .getAttribute("data-position"))!;

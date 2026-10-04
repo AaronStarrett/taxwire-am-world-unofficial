@@ -536,11 +536,30 @@ test("actual guided learner progresses through core work, an advanced case and a
         path: resolve(evidence, `${missionId}-browser-debrief.png`),
       });
   }
+  // The final action must reach persistent storage before this campaign's browser closes.
+  await expect(page.locator(".statusbar")).toHaveAttribute(
+    "data-save-status",
+    "saved",
+  );
+  await page.reload();
+  await page.getByRole("button", { name: /Continue your day/ }).click();
+  await step("completed");
+  await close();
+  await page.getByRole("button", { name: "Cases", exact: true }).click();
+  for (const missionId of sequence) {
+    await expect(
+      page
+        .locator(`.mission-card[data-case-id="${missionId}"]`)
+        .getByRole("button", { name: "Replay →", exact: true }),
+    ).toBeVisible();
+  }
   await writeFile(
     resolve(evidence, "sequential-browser-campaign.json"),
     JSON.stringify(
       {
         source: "actual first-day profile, UI actions only",
+        persistence:
+          "current save acknowledged; all twelve completions survive reload",
         testChoices:
           "authored expected choices; functional test, not human skill assessment",
         cases: progressEvidence,
