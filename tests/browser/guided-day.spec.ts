@@ -85,6 +85,14 @@ test("fresh learner completes real guided controls, preparation and a verified s
   await expect(
     page.getByRole("button", { name: /Start your guided first day/ }),
   ).toBeEnabled();
+  if (process.env.CI) {
+    await page
+      .getByRole("button", { name: "Settings", exact: true })
+      .first()
+      .click();
+    await page.getByLabel("Quality", { exact: true }).selectOption("low");
+    await page.getByRole("button", { name: "Close workbench" }).click();
+  }
   await page.screenshot({ path: resolve(evidence, "welcome-after.png") });
   await page
     .getByRole("button", { name: /Start your guided first day/ })
@@ -364,8 +372,12 @@ test("actual guided learner progresses through core work, an advanced case and a
     "X-A02",
     "C01",
   ];
-  const progressEvidence: { missionId: string; day: string; result: string }[] =
-    [];
+  const progressEvidence: {
+    missionId: string;
+    mode: string;
+    day: string;
+    result: string;
+  }[] = [];
   const closeDay = async () => {
     await page
       .locator(".workbench-nav")
@@ -385,10 +397,18 @@ test("actual guided learner progresses through core work, an advanced case and a
     await close();
     await page.getByRole("button", { name: "Cases", exact: true }).click();
     const card = page.locator(`.mission-card[data-case-id="${missionId}"]`);
+    const mode =
+      missionId === "M-A02"
+        ? "guided"
+        : missionId === "M-A01"
+          ? "assisted"
+          : "independent";
     const startName =
       missionId === "M-A02"
         ? "Continue guided attempt →"
-        : "Independent attempt";
+        : missionId === "M-A01"
+          ? "Assisted practice"
+          : "Independent attempt";
     await expect(
       card.getByRole("button", { name: startName, exact: true }),
     ).toBeEnabled();
@@ -497,16 +517,11 @@ test("actual guided learner progresses through core work, an advanced case and a
       .getByRole("button", { name: "View evidence debrief →", exact: true })
       .click();
     await expect(
-      page
-        .getByText(
-          new RegExp(
-            `Attempt .*${missionId === "M-A02" ? "guided" : "independent"}.*Passed`,
-          ),
-        )
-        .last(),
+      page.getByText(new RegExp(`Attempt .*${mode}.*Passed`)).last(),
     ).toBeVisible();
     progressEvidence.push({
       missionId,
+      mode,
       day: await page.locator(".clock").innerText(),
       result: "completed through displayed work tools",
     });

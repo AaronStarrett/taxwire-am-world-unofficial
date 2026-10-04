@@ -40,6 +40,7 @@ import {
   worldObjects,
   type WorldObject,
 } from "./locations";
+import { PositionSynchronizer } from "./PositionSync";
 import "./world.css";
 
 export type WorldPosition = { x: number; z: number; yaw: number };
@@ -56,6 +57,7 @@ export type WorldProps = {
   paused: boolean;
   location: string;
   position: WorldPosition;
+  positionRevision?: number;
   avatar: AvatarAppearance;
   showcase?: boolean;
   quality: "low" | "medium" | "high";
@@ -128,8 +130,17 @@ function Scene({
   const current = useRef<WorldPosition>({ ...props.position }),
     lastEmitted = useRef<WorldPosition>({ ...props.position }),
     positioned = useRef(false);
+  const positionSync = useRef(
+    new PositionSynchronizer(props.positionRevision ?? 0),
+  );
   const callbacks = useRef(props);
   callbacks.current = props;
+  const emitPosition = useCallback((position: WorldPosition) => {
+    const snapshot = { ...position };
+    lastEmitted.current = snapshot;
+    positionSync.current.emit(snapshot);
+    callbacks.current.onPosition(snapshot);
+  }, []);
   const motion = useRef<CharacterMotion>({ speed: 0, interaction: 0 });
   const journey = useRef({ moved: 0, targetTravel: 0, reached: false });
   const sample = useRef({ time: 0, frames: 0, ui: 0, position: 0 });
@@ -216,6 +227,7 @@ function Scene({
         ? restored
         : { x: location.x, z: location.z, yaw: location.rotation };
     positioned.current = true;
+    positionSync.current.reset();
     controls.current.path = [];
     controls.current.keys.clear();
     controls.current.orbit = location.rotation + Math.PI;
@@ -226,11 +238,16 @@ function Scene({
         2.65,
         current.current.z - Math.cos(controls.current.orbit) * 4.25,
       );
-    lastEmitted.current = { ...current.current };
-    callbacks.current.onPosition({ ...current.current });
+    emitPosition(current.current);
   }, [props.location]);
   useEffect(() => {
+    const update = positionSync.current.receive(
+      props.position,
+      props.positionRevision ?? 0,
+    );
+    if (update === "echo" || update === "stale") return;
     const external =
+      update === "restore" ||
       Math.hypot(
         props.position.x - lastEmitted.current.x,
         props.position.z - lastEmitted.current.z,
@@ -243,10 +260,16 @@ function Scene({
       const area = getLocationAt(next.x, next.z);
       controls.current.orbit = area ? area.rotation + Math.PI : next.yaw;
       controls.current.path = [];
+      controls.current.keys.clear();
       if (next.x !== props.position.x || next.z !== props.position.z)
-        callbacks.current.onPosition({ ...next });
+        emitPosition(next);
     }
-  }, [props.position.x, props.position.z, props.position.yaw]);
+  }, [
+    props.position.x,
+    props.position.z,
+    props.position.yaw,
+    props.positionRevision,
+  ]);
   useEffect(() => {
     if (props.paused) {
       controls.current.keys.clear();
@@ -305,8 +328,8 @@ function Scene({
       input.path = [];
       input.recoverRequested = false;
       next = { x: area.x, z: area.z };
-      lastEmitted.current = { ...current.current };
-      config.onPosition({ ...current.current });
+      positionSync.current.reset();
+      emitPosition(current.current);
       config.onWorldEvent?.({
         type: "recovered",
         locationId: area.id,
@@ -388,8 +411,7 @@ function Scene({
         !config.paused
       ) {
         journey.current.reached = true;
-        lastEmitted.current = { ...current.current };
-        config.onPosition({ ...current.current });
+        emitPosition(current.current);
         config.onWorldEvent?.({
           type: "target-reached",
           objectId: target.objectId,
@@ -470,8 +492,8 @@ function Scene({
               yaw: destination.rotation,
             };
             input.orbit = destination.rotation + Math.PI;
-            lastEmitted.current = { ...current.current };
-            config.onPosition({ ...current.current });
+            positionSync.current.reset();
+            emitPosition(current.current);
           }
           config.onTravel(destination.id);
         }
@@ -569,8 +591,7 @@ function Scene({
         ) > 0.03 ||
         Math.abs(current.current.yaw - lastEmitted.current.yaw) > 0.03
       ) {
-        lastEmitted.current = { ...current.current };
-        config.onPosition({ ...current.current });
+        emitPosition(current.current);
       }
     }
     sample.current.time += rawDelta;

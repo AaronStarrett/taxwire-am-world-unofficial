@@ -11,6 +11,7 @@ import {
 import { getLocationAt, locations, localToWorld } from "../src/world/locations";
 import { accounts, contacts } from "../src/content/accounts";
 import { walkingPose } from "../src/world/gait";
+import { PositionSynchronizer } from "../src/world/PositionSync";
 
 describe("walkable training district", () => {
   it("provides eight distinct safe indoor arrivals and wide unobstructed doors", () => {
@@ -173,5 +174,86 @@ describe("walkable training district", () => {
           `${location.id}/${person.label}`,
         ).toBe(true);
       }
+  });
+});
+
+describe("scene position acknowledgements", () => {
+  // Actual poses from the failed mentor-to-desk route: A arrived after B was emitted.
+  const a = {
+    x: -2.2753967006279896,
+    z: -22.091375812978008,
+    yaw: 4.680015428992586,
+  };
+  const b = {
+    x: -2.3930751745502374,
+    z: -22.094502340556538,
+    yaw: 4.68356309099757,
+  };
+  const arrival = { x: 0, z: -19.6, yaw: 0 };
+
+  it("recognizes a delayed local pose without cancelling the newer walking route", () => {
+    const sync = new PositionSynchronizer();
+    sync.emit(a);
+    sync.emit(b);
+    expect(sync.receive(a)).toBe("echo");
+    expect(sync.receive(b)).toBe("echo");
+    expect(sync.receive(a)).toBe("stale");
+  });
+
+  it("accepts a batched newest acknowledgement and ignores skipped older echoes", () => {
+    const sync = new PositionSynchronizer();
+    const mutable = { ...a };
+    sync.emit(mutable);
+    mutable.x = 30;
+    sync.emit(b);
+    expect(sync.receive(b)).toBe("echo");
+    expect(sync.receive(a)).toBe("stale");
+    expect(sync.receive(mutable)).toBe("external");
+  });
+
+  it("applies an unmatched external restore and rejects pre-restore walking echoes", () => {
+    const sync = new PositionSynchronizer();
+    sync.emit(a);
+    sync.emit(b);
+    expect(sync.receive(arrival)).toBe("external");
+    expect(sync.receive(a)).toBe("stale");
+    expect(sync.receive(b)).toBe("stale");
+    sync.emit(arrival);
+    expect(sync.receive(arrival)).toBe("echo");
+  });
+
+  it("honors explicit checkpoint/import revisions even at a locally emitted pose", () => {
+    const sync = new PositionSynchronizer();
+    sync.emit(a);
+    sync.emit(b);
+    expect(sync.receive(a, 1)).toBe("restore");
+    expect(sync.receive(b, 0)).toBe("stale");
+    expect(sync.receive(b, 1)).toBe("stale");
+    expect(sync.receive(a, 2)).toBe("restore");
+    expect(sync.receive(arrival, 1)).toBe("stale");
+  });
+
+  it("keeps local recovery/travel arrivals authoritative and new profiles independent", () => {
+    const sync = new PositionSynchronizer(4);
+    sync.emit(a);
+    sync.reset();
+    sync.emit(arrival);
+    expect(sync.receive(a, 4)).toBe("stale");
+    expect(sync.receive(arrival, 4)).toBe("echo");
+    const restoredProfile = new PositionSynchronizer(5);
+    expect(restoredProfile.receive(a, 5)).toBe("external");
+  });
+
+  it("accepts newest echoes and explicit old checkpoints after long bounded histories", () => {
+    const sync = new PositionSynchronizer(0, 4);
+    const poses = Array.from({ length: 20 }, (_, index) => ({
+      x: index / 10,
+      z: -19.6,
+      yaw: 0,
+    }));
+    for (const pose of poses) sync.emit(pose);
+    expect(sync.receive(poses[19])).toBe("echo");
+    expect(sync.receive(poses[18])).toBe("stale");
+    expect(sync.receive(poses[0], 1)).toBe("restore");
   });
 });

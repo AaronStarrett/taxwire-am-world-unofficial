@@ -83,7 +83,9 @@ export default function App() {
     [paused, setPaused] = useState(false);
   const [webgl, setWebgl] = useState(() => canRender()),
     [saveLabel, setSaveLabel] = useState("Loading local save…"),
+    [savedSnapshot, setSavedSnapshot] = useState<GameState | null>(null),
     [name, setName] = useState("Learner");
+  const [positionRevision, setPositionRevision] = useState(0);
   const [profiles, setProfiles] = useState<
       { id: string; displayName: string }[]
     >([]),
@@ -146,6 +148,7 @@ export default function App() {
         if (alive) {
           if (saved) {
             setState(safeScene(saved));
+            setPositionRevision((revision) => revision + 1);
             setName(saved.learner.displayName);
           }
           setProfiles(known);
@@ -173,6 +176,7 @@ export default function App() {
       saveState(state)
         .then(() => {
           if (stateRef.current === state) {
+            setSavedSnapshot(state);
             setSaveLabel("Saved in this browser");
             void listProfiles()
               .then(setProfiles)
@@ -218,6 +222,7 @@ export default function App() {
   const interaction = useCallback(
     (id: string) => {
       if (id.startsWith("travel:")) {
+        setPositionRevision((revision) => revision + 1);
         dispatch({ type: "TRAVEL", location: id.slice(7) });
         return;
       }
@@ -272,6 +277,7 @@ export default function App() {
     name: "Founders Square",
   };
   const go = (id: string) => {
+    setPositionRevision((revision) => revision + 1);
     setState((s) => {
       const next = transition(s, { type: "TRAVEL", location: id }, content);
       const destination = locations.find((l) => l.id === id);
@@ -358,6 +364,7 @@ export default function App() {
       const saved = await loadState(id);
       if (saved) {
         setState(safeScene(saved));
+        setPositionRevision((revision) => revision + 1);
         setSaveProtected(false);
         setEntered(false);
         close();
@@ -380,6 +387,7 @@ export default function App() {
       await saveState(next);
       setProfiles(await listProfiles());
       setState(next);
+      setPositionRevision((revision) => revision + 1);
       setSaveProtected(false);
       setEntered(false);
       close();
@@ -404,6 +412,7 @@ export default function App() {
       return;
     await deleteState(state.learner.id);
     setState(safeScene(createState(state.learner, state.seed)));
+    setPositionRevision((revision) => revision + 1);
     close();
     setEntered(false);
   };
@@ -475,6 +484,7 @@ export default function App() {
               paused={!entered || !!panel || paused}
               location={state.location}
               position={state.position}
+              positionRevision={positionRevision}
               avatar={state.avatar}
               quality={state.settings.quality}
               reducedMotion={state.settings.reducedMotion}
@@ -700,12 +710,14 @@ export default function App() {
             state={state}
             dispatch={dispatch}
             setState={
-              ((update: SetStateAction<GameState>) =>
+              ((update: SetStateAction<GameState>) => {
+                setPositionRevision((revision) => revision + 1);
                 setState((previous) =>
                   safeScene(
                     typeof update === "function" ? update(previous) : update,
                   ),
-                )) as Dispatch<SetStateAction<GameState>>
+                );
+              }) as Dispatch<SetStateAction<GameState>>
             }
             go={go}
             profiles={profiles}
@@ -722,10 +734,25 @@ export default function App() {
           />
         )}
       </main>
-      <footer className="statusbar">
+      <footer
+        className="statusbar"
+        data-save-status={
+          saveProtected
+            ? "protected"
+            : savedSnapshot === state && saveLabel === "Saved in this browser"
+              ? "saved"
+              : saveLabel.startsWith("Saving unavailable")
+                ? "unavailable"
+                : ready
+                  ? "saving"
+                  : "loading"
+        }
+      >
         <span>
           <span className="live-dot" />
-          {saveLabel}
+          {saveLabel === "Saved in this browser" && savedSnapshot !== state
+            ? "Saving…"
+            : saveLabel}
         </span>
         <span>
           {fps > 0 && webgl && !state.settings.workbench ? `${fps} FPS · ` : ""}

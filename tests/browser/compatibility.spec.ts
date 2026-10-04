@@ -557,3 +557,81 @@ test("retains a protected custom active profile and its future tutorial bytes ac
     await context.close();
   }
 });
+
+test("acknowledges the current Calendar action before reporting saved and retains it on immediate reload", async () => {
+  const fixture = previousWorld(
+    2,
+    "in_progress",
+    "Current Save Acknowledgement",
+  );
+  const { context, page } = await launch("current-save-acknowledgement");
+  try {
+    await importWorld(page, fixture.envelope, "current-save-acknowledgement");
+    const status = page.locator(".statusbar");
+    await expect(status).toContainText("Saved in this browser");
+    await expect(status).toHaveAttribute("data-save-status", "saved");
+    await saves(page);
+    await page
+      .locator(".workbench-nav")
+      .getByRole("button", { name: "Calendar", exact: true })
+      .click();
+    const before = Number(
+      await page.locator("#world-shell").getAttribute("data-clock"),
+    );
+    const expectedClock = before + 30;
+    await page
+      .getByRole("button", {
+        name: "Advance 30 business minutes",
+        exact: true,
+      })
+      .click();
+    await expect(page.locator("#world-shell")).toHaveAttribute(
+      "data-clock",
+      String(expectedClock),
+    );
+    await expect(status).toContainText("Saved in this browser");
+    await expect(status).toHaveAttribute("data-save-status", "saved");
+
+    // Read immediately from the save acknowledgement, without a grace delay.
+    const stored = await page.evaluate(
+      (id) =>
+        new Promise<{ clockMinutes: number; learnerId: string }>(
+          (resolveResult, reject) => {
+            const opening = indexedDB.open("taxwire-am-world-local", 1);
+            opening.onerror = () => reject(opening.error);
+            opening.onsuccess = () => {
+              const database = opening.result;
+              const transaction = database.transaction("saves", "readonly");
+              const reading = transaction.objectStore("saves").get(id);
+              transaction.oncomplete = () => {
+                database.close();
+                const state = JSON.parse(reading.result.payload) as GameState;
+                resolveResult({
+                  clockMinutes: state.clockMinutes,
+                  learnerId: state.learner.id,
+                });
+              };
+              transaction.onerror = transaction.onabort = () => {
+                database.close();
+                reject(transaction.error);
+              };
+            };
+          },
+        ),
+      fixture.expected.learner.id,
+    );
+    expect(stored.learnerId).toBe(fixture.expected.learner.id);
+    expect(stored.clockMinutes).toBe(expectedClock);
+    await page.reload();
+    await page.getByRole("button", { name: /Continue your day/ }).click();
+    await expect(page.locator("#world-shell")).toHaveAttribute(
+      "data-clock",
+      String(expectedClock),
+    );
+    await page.screenshot({
+      path: resolve(evidence, "current-save-acknowledgement.png"),
+    });
+  } finally {
+    await context.close();
+  }
+});

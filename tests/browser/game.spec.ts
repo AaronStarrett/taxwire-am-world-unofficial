@@ -70,6 +70,14 @@ test("loads revised world and enters with visible unofficial disclaimer", async 
   await expect(
     page.getByRole("button", { name: "Cases", exact: true }),
   ).toBeVisible();
+  if (process.env.CI) {
+    await page
+      .getByRole("button", { name: "Settings", exact: true })
+      .first()
+      .click();
+    await page.getByLabel("Quality", { exact: true }).selectOption("low");
+    await page.getByRole("button", { name: "Close workbench" }).click();
+  }
   await page.screenshot({ path: resolve(evidence, "home-world.png") });
 });
 test("movement, wall collision, drag camera, typing focus and meaningful desk interaction", async () => {
@@ -107,7 +115,7 @@ test("movement, wall collision, drag camera, typing focus and meaningful desk in
         // Software-rendered runners advance fewer animation frames per wall-clock second.
         return Number(position.split(",")[1]) > 27.2 && stableSamples >= 2;
       },
-      { timeout: 30000, intervals: [750] },
+      { timeout: 60000, intervals: [750] },
     )
     .toBe(true);
   const wallPosition = await page

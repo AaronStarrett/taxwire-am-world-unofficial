@@ -7,7 +7,15 @@ $taskSaved = Get-Content -LiteralPath $taskState -Raw | ConvertFrom-Json
 $taskServer = Get-CimInstance Win32_Process -Filter "ProcessId=$($taskSaved.serverPid)" -ErrorAction SilentlyContinue
 if ($taskServer -and $taskServer.CommandLine -like "*$taskRoot*serve.mjs*") {
   $taskLive = Get-Process -Id $taskSaved.serverPid
-  if ($taskLive.StartTime.ToUniversalTime().ToString('o') -eq $taskSaved.serverStarted) { Stop-Process -Id $taskSaved.serverPid }
+  # PowerShell 7 may deserialize the ISO timestamp as DateTime; Windows PowerShell keeps a string.
+  if ($taskSaved.serverStarted -is [DateTimeOffset]) {
+    $taskStartedUtc = $taskSaved.serverStarted.UtcDateTime
+  } elseif ($taskSaved.serverStarted -is [DateTime]) {
+    $taskStartedUtc = $taskSaved.serverStarted.ToUniversalTime()
+  } else {
+    $taskStartedUtc = [DateTimeOffset]::Parse([string]$taskSaved.serverStarted, [Globalization.CultureInfo]::InvariantCulture).UtcDateTime
+  }
+  if ($taskLive.StartTime.ToUniversalTime().Ticks -eq $taskStartedUtc.Ticks) { Stop-Process -Id $taskSaved.serverPid }
 }
 $taskProfile = [IO.Path]::GetFullPath($taskSaved.profile)
 if (-not $taskProfile.StartsWith((Join-Path $taskRoot '.local\'),[StringComparison]::OrdinalIgnoreCase)) { throw 'Tracked browser profile is outside this project.' }
