@@ -1530,6 +1530,8 @@ export function reconcileConversationAppointments(
       !appointment ||
       session.status !== "active" ||
       session.flags.includes("cafe-attended") ||
+      session.flags.includes("coffee-cancelled") ||
+      session.nodeId === "coffee_cancel" ||
       session.flags.includes("missed-coffee")
     )
       continue;
@@ -2067,6 +2069,7 @@ export function applyConversationAction(
     }
     case "coffee_wait/cancel":
       cancelAppointment(state, session);
+      flag("coffee-cancelled");
       flag("partial");
       go("coffee_cancel");
       break;

@@ -628,13 +628,13 @@ function act(
   const trustChange =
     attempt.mode === "replay"
       ? 0
-      : previouslyAwarded
+      : previouslyAwarded || !backed
         ? Math.min(choice.trustDelta ?? 0, 0)
         : (choice.trustDelta ?? 0);
   const riskChange =
     attempt.mode === "replay"
       ? 0
-      : previouslyAwarded
+      : previouslyAwarded || !backed
         ? Math.max(choice.riskDelta ?? 0, 0)
         : (choice.riskDelta ?? 0);
   const evidenceIds = backed

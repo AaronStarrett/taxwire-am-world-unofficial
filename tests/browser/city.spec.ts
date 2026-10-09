@@ -246,7 +246,9 @@ async function restoreSynthetic(state: GameState, name: string) {
 // UI test coverage follows below. Graph topology and all floor collision geometry are
 // also exercised headlessly; these tests establish the actual rendered controls.
 test("travels through every building and representative upper floors, preserving floor and pose across reload", async () => {
-  test.setTimeout(process.env.CI ? 300000 : 180000);
+  // Software WebGL needs settled frames for 14 different rooms plus reload and
+  // collision checks. Keep one bounded tour without dropping scene assertions.
+  test.setTimeout(process.env.CI ? 600000 : 300000);
   await expect(page.locator("canvas")).toBeVisible();
   const plaza = createState(
     { id: "synthetic-city-plaza", displayName: "Synthetic City Learner" },
@@ -723,8 +725,13 @@ test("a mission challenge takes a real fork, persists it, and distinguishes poor
   };
   const resume = async () => {
     await openPanel("Cases");
-    await page
-      .locator(`.mission-card[data-case-id="${mission.id}"]`)
+    const activeCase = page.locator(".callout").filter({
+      has: page.getByRole("button", { name: "Resume →", exact: true }),
+    });
+    await expect(activeCase.locator("strong")).toHaveText(
+      `In progress: ${mission.title}`,
+    );
+    await activeCase
       .getByRole("button", { name: "Resume →", exact: true })
       .click();
   };
@@ -941,5 +948,39 @@ test(
     await page.getByRole("button", { name: /Continue your day/ }).click();
     await expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect((await save()).tutorial).toEqual(progressed.tutorial);
+
+    // Smaller iPhone landscape widths still need the short-screen layout.
+    await page.setViewportSize({ width: 667, height: 375 });
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    const compactLandscape = await objective.boundingBox();
+    expect(compactLandscape!.height).toBeLessThanOrEqual(112);
+    expect(compactLandscape!.x).toBeGreaterThanOrEqual(0);
+    expect(compactLandscape!.x + compactLandscape!.width).toBeLessThanOrEqual(
+      667,
+    );
+    expect(compactLandscape!.y + compactLandscape!.height).toBeLessThanOrEqual(
+      375,
+    );
+    await expect(forward).toBeVisible();
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect(toggle).toBeFocused();
+    await expect(objective.locator("dl")).toBeVisible();
+    const compactExpanded = await objective.boundingBox();
+    expect(compactExpanded!.height).toBeGreaterThan(100);
+    expect(compactExpanded!.x + compactExpanded!.width).toBeLessThanOrEqual(
+      667,
+    );
+    expect(compactExpanded!.y + compactExpanded!.height).toBeLessThanOrEqual(
+      375,
+    );
+    await expect(forward).toBeVisible();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    expect((await save()).tutorial).toEqual(progressed.tutorial);
+    await sceneScreenshot("phone-guidance-expanded-small-landscape.png", 0);
   },
 );

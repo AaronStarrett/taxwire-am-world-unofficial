@@ -3,6 +3,9 @@ import { isValidElement, type ReactNode } from "react";
 import {
   BufferGeometry,
   Group,
+  Mesh,
+  MeshBasicMaterial,
+  Raycaster,
   SkinnedMesh,
   Vector3,
   type Material,
@@ -220,6 +223,51 @@ describe("visible tailored layers", () => {
             garmentSurfaceDepth(center.x, center.y, shoulder) - 0.0001,
           );
       }
+    },
+  );
+});
+
+describe("overlapping collar and lapel depth", () => {
+  it.each([0, 2])(
+    "keeps overlapping white and jacket surfaces separated in variant %i",
+    (variant) => {
+      const geometries = buildAvatar(variant).meshes.flatMap(({ geometry }) => {
+        if (!geometry) return [];
+        geometry.computeBoundingBox();
+        return [geometry];
+      });
+      const white = geometries.find(
+        (geometry) =>
+          geometry.boundingBox!.min.y > 1.12 &&
+          geometry.boundingBox!.max.y > 1.42,
+      )!;
+      const lapels = geometries.find(
+        (geometry) =>
+          geometry.boundingBox!.min.y > 1.03 &&
+          geometry.boundingBox!.min.y < 1.04 &&
+          geometry.boundingBox!.max.y > 1.4,
+      )!;
+      expect(white).toBeDefined();
+      expect(lapels).toBeDefined();
+      const material = new MeshBasicMaterial();
+      const whiteMesh = new Mesh(white, material),
+        lapelMesh = new Mesh(lapels, material);
+      const ray = new Raycaster();
+      let overlaps = 0;
+      for (let x = -0.074; x < 0.075; x += 0.007)
+        for (let y = 1.17; y < 1.404; y += 0.007) {
+          ray.set(new Vector3(x, y, 1), new Vector3(0, 0, -1));
+          const whiteHit = ray.intersectObject(whiteMesh)[0];
+          const lapelHit = ray.intersectObject(lapelMesh)[0];
+          if (whiteHit && lapelHit) {
+            overlaps++;
+            expect(
+              Math.abs(whiteHit.point.z - lapelHit.point.z),
+            ).toBeGreaterThan(0.001);
+          }
+        }
+      material.dispose();
+      expect(overlaps).toBeGreaterThan(25);
     },
   );
 });

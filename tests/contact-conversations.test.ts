@@ -508,6 +508,51 @@ describe("professional café invitations and actual follow-through", () => {
     ).toHaveLength(0);
   });
 
+  it("does not penalize a cancelled coffee invitation after pause, reload and clock advancement", () => {
+    const npcId = "npc-cedarline-1";
+    let state = route(
+      start(fresh(npcId), "coffee", npcId),
+      ["invite", "schedule", "cancel"],
+      npcId,
+    );
+    const session = conversationView(state, content, npcId)!.session!;
+    const appointment = structuredClone(session.appointment);
+    expect(session.history.at(-1)?.choiceId).toBe("cancel");
+    expect(session.flags).toContain("coffee-cancelled");
+    expect(state.appointments.some((item) => item.id === appointment?.id)).toBe(
+      false,
+    );
+    const health = structuredClone(state.accountHealth["acct-cedarline"]);
+    state = transition(state, { type: "CLOSE_CONVERSATION", npcId }, content);
+    state = migrateState(JSON.parse(JSON.stringify(state))).state;
+    state = transition(state, { type: "END_DAY" }, content);
+    expect(state.npcMemory[npcId]?.trust ?? 50).toBe(50);
+    expect(state.accountHealth["acct-cedarline"]).toEqual(health);
+    expect(
+      state.events.some((event) => event.type === "relationship-missed"),
+    ).toBe(false);
+    expect(
+      conversationView(state, content, npcId)?.session?.appointment,
+    ).toEqual(appointment);
+    state = start(state, "coffee", npcId);
+    state = talk(state, "written", npcId);
+    expect(conversationView(state, content, npcId)?.debrief?.outcome).toBe(
+      "mixed",
+    );
+    // Older interrupted cancellations retain their stage even without the new marker.
+    const oldCancellation = route(
+      start(fresh(npcId), "coffee", npcId),
+      ["invite", "schedule", "cancel"],
+      npcId,
+    );
+    readRelationshipConversations(oldCancellation).sessions[npcId].flags = [
+      "partial",
+    ];
+    const advanced = transition(oldCancellation, { type: "END_DAY" }, content);
+    expect(
+      advanced.events.some((event) => event.type === "relationship-missed"),
+    ).toBe(false);
+  });
   it("retains meaningful customer risk after a missed café commitment, and does not repeat the penalty on replay", () => {
     const npcId = "npc-cedarline-1";
     let state = route(

@@ -3148,7 +3148,7 @@ td input {
     max-width: calc(100% - 24px);
   }
 }
-@media (max-height: 500px) and (min-width: 761px) {
+@media (max-height: 500px) and (min-width: 540px) {
   .topbar {
     height: 48px;
   }
@@ -3194,7 +3194,7 @@ td input {
     min-height: 0;
   }
 }
-@media (max-height: 500px) and (min-width: 761px) {
+@media (max-height: 500px) and (min-width: 540px) {
   .app .world-elevator {
     left: max(230px, calc(env(safe-area-inset-left) + 230px));
     top: 10px;

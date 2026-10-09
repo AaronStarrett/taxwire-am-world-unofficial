@@ -617,7 +617,9 @@ function Tailoring({
   shoulderWidth: number;
 }) {
   const geometry = useMemo(() => {
-    const fitPatch = (points: Point[], triangles: number[], layer = 0.005) =>
+    // Distinct physical layers avoid coplanar white/green fragments in close-ups.
+    // Shirt < tie < jacket lapel < folded collar; preserve a gap after tessellation.
+    const fitPatch = (points: Point[], triangles: number[], layer = 0.012) =>
       patch(points, triangles, layer, shoulderWidth);
     const light: BufferGeometry[] = [],
       dark: BufferGeometry[] = [],
@@ -680,6 +682,7 @@ function Tailoring({
               [-0.007, 1.333, 0.111],
             ],
             [0, 3, 1, 1, 3, 2],
+            0.007,
           ),
         );
         seams.push(
@@ -692,6 +695,7 @@ function Tailoring({
               [-0.012, 1.207, 0.124],
             ],
             [0, 4, 3, 0, 3, 1, 1, 3, 2],
+            0.007,
           ),
         );
       }
@@ -766,6 +770,7 @@ function Tailoring({
             [side * 0.029, 1.347, 0.099],
           ],
           side < 0 ? [0, 2, 1, 0, 3, 2] : [0, 1, 2, 0, 2, 3],
+          0.017,
         ),
       );
     }

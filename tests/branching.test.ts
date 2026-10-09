@@ -313,6 +313,73 @@ describe("branch persistence and consequences", () => {
     expect(activeStep(result, calcPack)?.id).toBe(step.id);
     expect(result.missions[calcMission.id].evidenceIds).not.toContain(step.id);
   });
+  it("repeated wrong arithmetic cannot farm trust or risk improvements, while harmful effects remain", () => {
+    const calcMission = structuredClone(
+      content.missions.find((item) => item.id === "M-T02")!,
+    );
+    const calcStep = calcMission.steps.find(
+      (step) => step.expectedValue !== undefined,
+    )!;
+    const evidenceChoice = calcStep.choices.find(
+      (choice) => choice.id === "evidence",
+    )!;
+    evidenceChoice.trustDelta = 3;
+    const harmfulChoice = calcStep.choices.find(
+      (choice) => choice.id === "shortcut",
+    )!;
+    harmfulChoice.trustDelta = -4;
+    const calcPack = packFor(calcMission);
+    let state = transition(
+      createState(),
+      { type: "START_MISSION", missionId: calcMission.id },
+      calcPack,
+    );
+    while (activeStep(state, calcPack)!.id !== calcStep.id)
+      state = choose(state, calcPack, best(state, calcPack));
+    const health = structuredClone(state.accountHealth[calcMission.accountId]);
+    for (let index = 0; index < 3; index++) {
+      state = transition(
+        state,
+        {
+          type: "ACT",
+          id: `no-calculation-reward-${index}`,
+          stepId: calcStep.id,
+          choiceId: "evidence",
+          value: calcStep.expectedValue! + 1,
+        },
+        calcPack,
+      );
+      expect(state.accountHealth[calcMission.accountId].trust).toBe(
+        health.trust,
+      );
+      expect(state.accountHealth[calcMission.accountId].risk).toBe(health.risk);
+      expect(activeStep(state, calcPack)?.id).toBe(calcStep.id);
+    }
+    const harmful = transition(
+      state,
+      {
+        type: "ACT",
+        id: "harmful-calculation-effect",
+        stepId: calcStep.id,
+        choiceId: "shortcut",
+        value: calcStep.expectedValue! + 1,
+      },
+      calcPack,
+    );
+    expect(harmful.accountHealth[calcMission.accountId].trust).toBe(
+      health.trust - 4,
+    );
+    expect(harmful.accountHealth[calcMission.accountId].risk).toBe(
+      health.risk + (harmfulChoice.riskDelta ?? 0),
+    );
+    const corrected = choose(state, calcPack, "evidence");
+    expect(corrected.accountHealth[calcMission.accountId].trust).toBe(
+      health.trust + 3,
+    );
+    expect(corrected.accountHealth[calcMission.accountId].risk).toBe(
+      health.risk + (evidenceChoice.riskDelta ?? 0),
+    );
+  });
   it("replays all relationship effects as practice and rejects duplicated action IDs", () => {
     const completed = run(mission, "good");
     let state = transition(
