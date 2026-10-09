@@ -101,6 +101,17 @@ export function ConversationPanel({
   const home = getContactHome(selected.id);
   const active = session?.status === "active";
   const appointment = session?.appointment;
+  const confirmedCoffee =
+    active &&
+    appointment &&
+    state.appointments.some(
+      (item) =>
+        item.id === appointment.id &&
+        (item.status === "scheduled" || item.status === "attended"),
+    );
+  const meetingPlace = confirmedCoffee
+    ? { locationId: "cafe", floor: 0 }
+    : home;
   const appointmentMinute = appointment
     ? appointmentClock(appointment.day, appointment.minute)
     : undefined;
@@ -368,14 +379,21 @@ export function ConversationPanel({
           </ol>
         </details>
       )}
-      {home && (
+      {meetingPlace && (
         <button
           className="text-button"
-          onClick={() => changeFloor(home.locationId, home.floor)}
+          onClick={() =>
+            changeFloor(meetingPlace.locationId, meetingPlace.floor)
+          }
         >
-          Meet in person ·{" "}
-          {locations.find((place) => place.id === home.locationId)?.name} ·{" "}
-          {getBuildingFloors(home.locationId)[home.floor]?.name} →
+          {confirmedCoffee ? "Your coffee venue" : "Meet in person"} ·{" "}
+          {
+            locations.find((place) => place.id === meetingPlace.locationId)
+              ?.name
+          }{" "}
+          ·{" "}
+          {getBuildingFloors(meetingPlace.locationId)[meetingPlace.floor]?.name}{" "}
+          →
         </button>
       )}
       <details className="contact-brief">

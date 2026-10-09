@@ -102,22 +102,34 @@ function combine(parts: BufferGeometry[]) {
   parts.forEach((part) => part.dispose());
   return geometry;
 }
-function patch(points: Point[], triangles: number[]) {
-  const geometry = new BufferGeometry();
-  geometry.setAttribute(
-    "position",
-    new Float32BufferAttribute(points.flat(), 3),
-  );
-  geometry.setAttribute(
-    "uv",
-    new Float32BufferAttribute(
-      points.flatMap((point) => [point[0] * 8, point[1] * 8]),
-      2,
-    ),
-  );
-  // All garment patches face forward. Mirrored lapels/collar tips must keep
-  // outward winding as well, otherwise one or both disappear under back-face culling.
-  const outward = [...triangles];
+/** Front depth of the same elliptical rings used by the garment mesh. */
+export function garmentSurfaceDepth(x: number, y: number, shoulderWidth = 1) {
+  const height = y - 0.893;
+  if (height < 0 || height > 0.523) return 0;
+  for (let i = 0; i < torsoProfile.length - 1; i++) {
+    const a = torsoProfile[i],
+      b = torsoProfile[i + 1];
+    if (height <= b.y) {
+      const radius = a.x + ((b.x - a.x) * (height - a.y)) / (b.y - a.y);
+      return (
+        Math.sqrt(Math.max(0, radius * radius - (x / shoulderWidth) ** 2)) *
+        0.63
+      );
+    }
+  }
+  return 0;
+}
+
+function patch(
+  points: Point[],
+  triangles: number[],
+  layer = 0.005,
+  shoulderWidth = 1,
+) {
+  // Tessellation matters here: a flat triangle between collar and waist cuts
+  // through the convex chest even when its corner vertices are on the surface.
+  const vertices = points.map((point) => [...point] as Point);
+  let outward = [...triangles];
   for (let i = 0; i < outward.length; i += 3) {
     const a = points[outward[i]],
       b = points[outward[i + 1]],
@@ -125,6 +137,50 @@ function patch(points: Point[], triangles: number[]) {
     if ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]) < 0)
       [outward[i + 1], outward[i + 2]] = [outward[i + 2], outward[i + 1]];
   }
+  for (let pass = 0; pass < 4; pass++) {
+    const edges = new Map<string, number>();
+    const midpoint = (a: number, b: number) => {
+      const key = `${Math.min(a, b)}:${Math.max(a, b)}`;
+      const existing = edges.get(key);
+      if (existing !== undefined) return existing;
+      const index = vertices.length;
+      vertices.push(
+        vertices[a].map(
+          (value, axis) => (value + vertices[b][axis]) / 2,
+        ) as Point,
+      );
+      edges.set(key, index);
+      return index;
+    };
+    const next: number[] = [];
+    for (let i = 0; i < outward.length; i += 3) {
+      const a = outward[i],
+        b = outward[i + 1],
+        c = outward[i + 2];
+      const ab = midpoint(a, b),
+        bc = midpoint(b, c),
+        ca = midpoint(c, a);
+      next.push(a, ab, ca, ab, b, bc, ca, bc, c, ab, bc, ca);
+    }
+    outward = next;
+  }
+  for (const vertex of vertices)
+    vertex[2] = Math.max(
+      vertex[2],
+      garmentSurfaceDepth(vertex[0], vertex[1], shoulderWidth) + layer,
+    );
+  const geometry = new BufferGeometry();
+  geometry.setAttribute(
+    "position",
+    new Float32BufferAttribute(vertices.flat(), 3),
+  );
+  geometry.setAttribute(
+    "uv",
+    new Float32BufferAttribute(
+      vertices.flatMap((point) => [point[0] * 8, point[1] * 8]),
+      2,
+    ),
+  );
   geometry.setIndex(outward);
   geometry.computeVertexNormals();
   return geometry;
@@ -182,26 +238,26 @@ const pelvisProfile = [
 ];
 const sleeve = [
   new Vector2(0, -0.584),
-  new Vector2(0.032, -0.579),
-  new Vector2(0.035, -0.535),
-  new Vector2(0.041, -0.46),
-  new Vector2(0.047, -0.37),
-  new Vector2(0.051, -0.3),
-  new Vector2(0.055, -0.22),
-  new Vector2(0.063, -0.1),
-  new Vector2(0.069, -0.025),
+  new Vector2(0.039, -0.579),
+  new Vector2(0.041, -0.535),
+  new Vector2(0.049, -0.46),
+  new Vector2(0.054, -0.37),
+  new Vector2(0.057, -0.3),
+  new Vector2(0.062, -0.22),
+  new Vector2(0.069, -0.1),
+  new Vector2(0.073, -0.025),
   new Vector2(0.059, 0.025),
   new Vector2(0, 0.045),
 ];
 const trouserLeg = [
   new Vector2(0, -0.753),
-  new Vector2(0.046, -0.748),
-  new Vector2(0.049, -0.7),
-  new Vector2(0.056, -0.59),
-  new Vector2(0.06, -0.49),
-  new Vector2(0.062, -0.387),
-  new Vector2(0.07, -0.29),
-  new Vector2(0.082, -0.17),
+  new Vector2(0.055, -0.748),
+  new Vector2(0.059, -0.7),
+  new Vector2(0.066, -0.59),
+  new Vector2(0.068, -0.49),
+  new Vector2(0.07, -0.387),
+  new Vector2(0.079, -0.29),
+  new Vector2(0.09, -0.17),
   new Vector2(0.097, -0.055),
   new Vector2(0.1, 0.025),
   new Vector2(0.078, 0.075),
@@ -233,8 +289,8 @@ function sculptHead(skin: Color, width: number) {
     if (nz > 0) {
       z = 0.092 * Math.pow(nz, 0.64);
       const central = gaussian(x, 0, 0.015);
-      z += central * gaussian(y, 0.002, 0.04) * 0.023;
-      z += gaussian(x, 0, 0.019) * gaussian(y, -0.026, 0.015) * 0.035;
+      z += central * gaussian(y, 0.002, 0.04) * 0.019;
+      z += gaussian(x, 0, 0.019) * gaussian(y, -0.026, 0.015) * 0.025;
       z +=
         gaussian(Math.abs(x), 0.016, 0.007) *
         gaussian(y, -0.032, 0.007) *
@@ -271,10 +327,16 @@ function hairGeometry(variant: number) {
       const phi = -u * Math.PI * 2,
         front = Math.cos(phi);
       const long = variant === 1;
+      const fringe =
+        variant === 0
+          ? Math.max(0, front) *
+            (0.08 * Math.sin(phi - 0.55) + 0.025 * Math.cos(phi * 5))
+          : 0;
       const extent =
-        1.75 -
-        0.57 * Math.max(0, front) +
-        (long ? 0.86 : 0.16) * Math.max(0, -front);
+        (long ? 1.75 : 1.65) -
+        (long ? 0.57 : 0.49) * Math.max(0, front) +
+        (long ? 0.86 : 0.22) * Math.max(0, -front) +
+        fringe;
       const theta = v * extent;
       const wave =
         variant === 2
@@ -282,12 +344,13 @@ function hairGeometry(variant: number) {
           : 0.001 * Math.cos(phi * 17 + theta * 6);
       const sweep =
         variant === 0
-          ? Math.max(0, Math.cos(phi - 0.8)) * Math.sin(theta) * 0.008
+          ? Math.max(0, Math.cos(phi - 0.8)) * Math.sin(theta) * 0.005
           : 0;
       target.set(
-        Math.sin(phi) * Math.sin(theta) * (0.111 + wave),
-        Math.cos(theta) * (0.153 + sweep) + 0.012,
-        Math.cos(phi) * Math.sin(theta) * (0.109 + wave) - 0.006,
+        Math.sin(phi) * Math.sin(theta) * ((long ? 0.111 : 0.108) + wave),
+        Math.cos(theta) * (0.151 + sweep) + 0.008,
+        Math.cos(phi) * Math.sin(theta) * ((long ? 0.109 : 0.106) + wave) -
+          0.006,
       );
       if (long && front < 0.15 && theta > 1.35) {
         target.y -= (theta - 1.35) * 0.049;
@@ -336,18 +399,18 @@ function Face({
       );
       const x = side * 0.039;
       // Small almond openings sit inside the sculpted orbit, with skin-toned lids.
-      whites.push(ellipsoid([x, 0.025, 0.082], [0.017, 0.0058, 0.0048]));
+      whites.push(ellipsoid([x, 0.025, 0.08], [0.016, 0.0042, 0.004]));
       irises.push(
-        ellipsoid([x, 0.025, 0.086], [0.0046, 0.0049, 0.0018], 16, 10),
+        ellipsoid([x, 0.025, 0.0835], [0.0038, 0.0038, 0.0014], 16, 10),
       );
-      dark.push(ellipsoid([x, 0.025, 0.0875], [0.002, 0.0028, 0.0008], 12, 8));
+      dark.push(ellipsoid([x, 0.025, 0.0846], [0.0017, 0.0021, 0.0007], 12, 8));
       skin.push(
         curvedLine(
           [
-            [x - 0.017, 0.025, 0.082],
-            [x - 0.008, 0.0308, 0.085],
-            [x + 0.006, 0.03, 0.085],
-            [x + 0.017, 0.025, 0.081],
+            [x - 0.016, 0.025, 0.079],
+            [x - 0.008, 0.029, 0.083],
+            [x + 0.006, 0.0285, 0.083],
+            [x + 0.016, 0.025, 0.078],
           ],
           0.0018,
           12,
@@ -356,9 +419,9 @@ function Face({
       skin.push(
         curvedLine(
           [
-            [x - 0.017, 0.025, 0.082],
-            [x, 0.02, 0.085],
-            [x + 0.017, 0.025, 0.081],
+            [x - 0.016, 0.025, 0.079],
+            [x, 0.0215, 0.083],
+            [x + 0.016, 0.025, 0.078],
           ],
           0.0014,
           10,
@@ -372,7 +435,7 @@ function Face({
             [x + 0.008, 0.046, 0.087],
             [x + 0.021, 0.042, 0.081],
           ],
-          0.0022,
+          0.0017,
           12,
         ),
       );
@@ -477,7 +540,7 @@ function createMaterials(appearance: AvatarAppearance, variant: number) {
   // Keep the selected/contact color recognizable while bringing it into a restrained wardrobe.
   shirt.lerp(
     new Color(style.wardrobe === 1 ? "#a2aaa6" : "#333c40"),
-    style.wardrobe === 1 ? 0.24 : 0.38,
+    style.wardrobe === 1 ? 0.24 : 0.51,
   );
   const fabric = {
     roughness: 0.96,
@@ -522,7 +585,7 @@ function createMaterials(appearance: AvatarAppearance, variant: number) {
       bumpMap: surfaces.grain,
       bumpScale: 0.0004,
     }),
-    eyes: new MeshStandardMaterial({ color: "#c8c8ba", roughness: 0.38 }),
+    eyes: new MeshStandardMaterial({ color: "#bfc0b4", roughness: 0.38 }),
     iris: new MeshStandardMaterial({
       color: variant % 2 ? "#544b37" : "#465751",
       roughness: 0.32,
@@ -547,11 +610,15 @@ function createMaterials(appearance: AvatarAppearance, variant: number) {
 function Tailoring({
   materials,
   wardrobe,
+  shoulderWidth,
 }: {
   materials: ReturnType<typeof createMaterials>;
   wardrobe: number;
+  shoulderWidth: number;
 }) {
   const geometry = useMemo(() => {
+    const fitPatch = (points: Point[], triangles: number[], layer = 0.005) =>
+      patch(points, triangles, layer, shoulderWidth);
     const light: BufferGeometry[] = [],
       dark: BufferGeometry[] = [],
       seams: BufferGeometry[] = [],
@@ -560,7 +627,7 @@ function Tailoring({
     // Inset shirt-front and angular lapels follow the curved chest rather than hovering over it.
     if (jacket) {
       light.push(
-        patch(
+        fitPatch(
           [
             [-0.061, 1.412, 0.043],
             [0.061, 1.412, 0.043],
@@ -569,6 +636,7 @@ function Tailoring({
             [-0.055, 1.27, 0.12],
           ],
           [0, 4, 3, 0, 3, 1, 1, 3, 2],
+          0.0035,
         ),
       );
       for (const side of [-1, 1]) {
@@ -584,7 +652,7 @@ function Tailoring({
           side < 0
             ? [0, 5, 2, 0, 2, 1, 2, 5, 4, 2, 4, 3]
             : [0, 2, 5, 0, 1, 2, 2, 4, 5, 2, 3, 4];
-        dark.push(patch(points, triangles));
+        dark.push(fitPatch(points, triangles));
         seams.push(
           curvedLine(
             [
@@ -604,7 +672,7 @@ function Tailoring({
       );
       if (wardrobe === 0) {
         seams.push(
-          patch(
+          fitPatch(
             [
               [-0.012, 1.365, 0.091],
               [0.012, 1.365, 0.091],
@@ -615,7 +683,7 @@ function Tailoring({
           ),
         );
         seams.push(
-          patch(
+          fitPatch(
             [
               [-0.006, 1.335, 0.11],
               [0.006, 1.335, 0.11],
@@ -690,7 +758,7 @@ function Tailoring({
     }
     for (const side of [-1, 1]) {
       light.push(
-        patch(
+        fitPatch(
           [
             [side * 0.006, 1.417, 0.049],
             [side * 0.054, 1.429, 0.026],
@@ -715,7 +783,7 @@ function Tailoring({
       metal: combine(metal),
       belt,
     };
-  }, [wardrobe]);
+  }, [wardrobe, shoulderWidth]);
   useEffect(
     () => () => Object.values(geometry).forEach((part) => part?.dispose()),
     [geometry],
@@ -806,20 +874,20 @@ function Hand({
   side: number;
 }) {
   const geometry = useMemo(() => {
-    const parts = [ellipsoid([0, 0, 0], [0.029, 0.045, 0.018])];
+    const parts = [ellipsoid([0, 0, 0], [0.035, 0.048, 0.02])];
     for (let finger = 0; finger < 4; finger++) {
-      const x = -0.021 + finger * 0.014;
+      const x = -0.024 + finger * 0.016;
       parts.push(
         ellipsoid(
           [x, -0.044, 0.005],
-          [0.0072, 0.028 - Math.abs(finger - 1.2) * 0.004, 0.007],
+          [0.008, 0.028 - Math.abs(finger - 1.2) * 0.004, 0.007],
           12,
           10,
         ),
       );
     }
     const thumb = ellipsoid(
-      [-side * 0.028, -0.005, 0.014],
+      [-side * 0.033, -0.005, 0.014],
       [0.009, 0.025, 0.01],
       12,
       10,
@@ -946,13 +1014,17 @@ export function AvatarModel({
         >
           <latheGeometry args={[torsoProfile, 40]} />
         </mesh>
-        <mesh position={[0, 1.463, 0]} material={materials.skin} castShadow>
-          <cylinderGeometry args={[0.047, 0.055, 0.112, 24]} />
+        <mesh position={[0, 1.455, 0]} material={materials.skin} castShadow>
+          <cylinderGeometry args={[0.059, 0.067, 0.098, 24]} />
         </mesh>
-        <Tailoring materials={materials} wardrobe={style.wardrobe} />
+        <Tailoring
+          materials={materials}
+          wardrobe={style.wardrobe}
+          shoulderWidth={style.shoulderWidth}
+        />
         <group
           ref={head}
-          position={[0, 1.624, 0.003]}
+          position={[0, 1.595, 0.003]}
           scale={[0.86, 0.84, 0.9]}
         >
           <Face materials={materials} style={style} />
@@ -976,7 +1048,7 @@ export function AvatarModel({
               position={[0, -0.295, 0]}
             >
               <mesh position={[0, -0.279, 0]} material={materials.collar}>
-                <cylinderGeometry args={[0.033, 0.031, 0.028, 20]} />
+                <cylinderGeometry args={[0.039, 0.036, 0.028, 20]} />
               </mesh>
               <group position={[0, -0.337, 0.001]}>
                 <Hand material={materials.skin} side={side} />
@@ -984,12 +1056,10 @@ export function AvatarModel({
               {side < 0 && (
                 <group position={[0, -0.272, 0]}>
                   <mesh material={materials.leather}>
-                    <cylinderGeometry
-                      args={[0.035, 0.035, 0.015, 20, 1, true]}
-                    />
+                    <cylinderGeometry args={[0.04, 0.04, 0.015, 20, 1, true]} />
                   </mesh>
                   <mesh
-                    position={[-0.031, 0, 0]}
+                    position={[-0.037, 0, 0]}
                     rotation={[0, 0, Math.PI / 2]}
                     material={materials.metal}
                   >

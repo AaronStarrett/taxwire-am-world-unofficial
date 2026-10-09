@@ -418,12 +418,17 @@ export function getFloorElevation(locationId: string, floor = 0) {
 export function getFloorArrival(locationId: string, floor = 0) {
   const location =
     locations.find((candidate) => candidate.id === locationId) ?? locations[0];
-  return {
-    x: location.x,
-    z: location.z,
-    yaw:
-      location.rotation + (normalizeFloor(locationId, floor) > 0 ? Math.PI : 0),
-  };
+  const upper = normalizeFloor(locationId, floor) > 0;
+  const position = upper
+    ? localToWorld(
+        0,
+        2.2,
+        location.centerX,
+        location.centerZ,
+        location.rotation,
+      )
+    : { x: location.x, z: location.z };
+  return { ...position, yaw: location.rotation + (upper ? Math.PI : 0) };
 }
 const existingContacts = new Set(
   locations.flatMap((location) =>

@@ -17,7 +17,8 @@ let page: Page;
 let errors: string[];
 
 // Every test has its own browser-local synthetic learner. No real learner save is read.
-test.beforeEach(async () => {
+test.beforeEach(async ({ browserName: _browserName }, info) => {
+  const mobileGuide = info.tags.includes("@mobile-guide");
   await mkdir(evidence, { recursive: true });
   context = await chromium.launchPersistentContext(
     resolve(
@@ -30,7 +31,9 @@ test.beforeEach(async () => {
         : process.platform === "win32"
           ? { channel: "chrome" }
           : {}),
-      viewport: { width: 1280, height: 800 },
+      viewport: mobileGuide
+        ? { width: 390, height: 844 }
+        : { width: 1280, height: 800 },
       acceptDownloads: true,
       downloadsPath: resolve(".local/exports/city"),
       args: [
@@ -52,7 +55,8 @@ test.beforeEach(async () => {
       errors.push(`${response.status()} ${response.url()}`);
   });
   await page.goto(base);
-  await page.getByRole("button", { name: /Explore freely/ }).click();
+  if (!mobileGuide)
+    await page.getByRole("button", { name: /Explore freely/ }).click();
   await page
     .getByRole("button", { name: "Settings", exact: true })
     .first()
@@ -62,17 +66,20 @@ test.beforeEach(async () => {
 });
 
 test.afterEach(async ({ browserName: _browserName }, info) => {
-  if (page && !page.isClosed()) {
-    if (info.status !== info.expectedStatus)
-      await page.screenshot({
-        path: resolve(
-          evidence,
-          `failure-${info.testId.replace(/\W/g, "-")}.png`,
-        ),
-      });
-    expect(errors).toEqual([]);
+  try {
+    if (page && !page.isClosed()) {
+      if (info.status !== info.expectedStatus)
+        await page.screenshot({
+          path: resolve(
+            evidence,
+            `failure-${info.testId.replace(/\W/g, "-")}.png`,
+          ),
+        });
+      expect(errors).toEqual([]);
+    }
+  } finally {
+    await context?.close();
   }
-  await context?.close();
 });
 
 async function save(): Promise<GameState> {
@@ -107,6 +114,22 @@ async function save(): Promise<GameState> {
         };
       }),
   );
+}
+
+async function sceneScreenshot(name: string, floor: number) {
+  const world = page.getByTestId("world");
+  // DOM navigation can update before WebGL has a usable upper-floor camera.
+  await expect(world).toHaveAttribute("data-scene-floor", String(floor));
+  await expect(world).toHaveAttribute("data-scene-settled", "true", {
+    timeout: process.env.CI ? 60000 : 30000,
+  });
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolveResult) =>
+        requestAnimationFrame(() => resolveResult()),
+      ),
+  );
+  await page.screenshot({ path: resolve(evidence, name) });
 }
 
 async function openPanel(name: string) {
@@ -193,7 +216,7 @@ async function restoreSynthetic(state: GameState, name: string) {
   await openPanel("Cases");
   await page
     .locator(".nav-bottom")
-    .getByRole("button", { name: "Saves & export", exact: true })
+    .getByRole("button", { name: "Saves & export" })
     .click();
   await page
     .getByLabel("Import world checkpoint", { exact: true })
@@ -236,7 +259,7 @@ test("travels through every building and representative upper floors, preserving
     "data-current-building",
     "street",
   );
-  await page.screenshot({ path: resolve(evidence, "street-skyline.png") });
+  await sceneScreenshot("street-skyline.png", 0);
   for (const location of locations) {
     await travel(location.id);
     const clock = (await save()).clockMinutes;
@@ -253,9 +276,7 @@ test("travels through every building and representative upper floors, preserving
       String(top.index),
     );
     await expect(page.getByTestId("floor-directory")).not.toBeVisible();
-    await page.screenshot({
-      path: resolve(evidence, `upper-${location.id}.png`),
-    });
+    await sceneScreenshot(`upper-${location.id}.png`, top.index);
     // Same floor entry is a no-op: opening/dismissing a directory never teleports.
     const position = await page
       .locator("#world-shell")
@@ -276,12 +297,10 @@ test("travels through every building and representative upper floors, preserving
       "data-current-floor",
       String(index),
     );
-    await page.screenshot({
-      path: resolve(
-        evidence,
-        `hq-layout-${getBuildingFloors("hq")[index].theme}.png`,
-      ),
-    });
+    await sceneScreenshot(
+      `hq-layout-${getBuildingFloors("hq")[index].theme}.png`,
+      index,
+    );
   }
   await page.getByTestId("world-elevator").click();
   await page.getByTestId("floor-8").click();
@@ -351,9 +370,7 @@ test("travels through every building and representative upper floors, preserving
     "data-current-floor",
     "8",
   );
-  await page.screenshot({
-    path: resolve(evidence, "hq-floor-save-reload.png"),
-  });
+  await sceneScreenshot("hq-floor-save-reload.png", 8);
   await travel("hq");
   await expect(page.getByTestId("world")).toHaveAttribute(
     "data-current-floor",
@@ -370,9 +387,7 @@ test("travels through every building and representative upper floors, preserving
     "data-current-floor",
     "0",
   );
-  await page.screenshot({
-    path: resolve(evidence, "hq-return-ground-door-exit.png"),
-  });
+  await sceneScreenshot("hq-return-ground-door-exit.png", 0);
 });
 
 // Use only public save import/export UI for synthetic fixture setup. New production
@@ -403,9 +418,7 @@ test("mobile floor directory stays usable without horizontal overflow or backgro
     "data-current-floor",
     "17",
   );
-  await page.screenshot({
-    path: resolve(evidence, "mobile-summit-lounge.png"),
-  });
+  await sceneScreenshot("mobile-summit-lounge.png", 17);
   await page.getByTestId("world-elevator").click();
   await page.getByTestId("floor-0").click();
   await expect(page.getByTestId("world")).toHaveAttribute(
@@ -568,9 +581,7 @@ test("different replies produce poor, mixed and recovery debriefs while interrup
 test("coffee invitation becomes a timed café visit with attendance, conversation and retained follow-through", async () => {
   await travel("hq");
   await person("npc-mentor");
-  await page.screenshot({
-    path: resolve(evidence, "mentor-conversation-framing.png"),
-  });
+  await sceneScreenshot("mentor-conversation-framing.png", 0);
   await startTopic("Invite them for coffee");
   await choose("invite");
   await expect(page.locator(".conversation-scene h3")).toHaveText(
@@ -620,9 +631,7 @@ test("coffee invitation becomes a timed café visit with attendance, conversatio
     (await save()).appointments.find((item) => item.id === appointment.id)
       ?.status,
   ).toBe("attended");
-  await page.screenshot({
-    path: resolve(evidence, "coffee-arrived-at-cafe.png"),
-  });
+  await sceneScreenshot("coffee-arrived-at-cafe.png", 0);
   for (const choice of ["work_style", "reflect", "followup"])
     await choose(choice);
   await expect(
@@ -643,9 +652,7 @@ test("coffee invitation becomes a timed café visit with attendance, conversatio
     appointmentClock(appointment.day, appointment.minute) +
       appointment.duration,
   );
-  await page.screenshot({
-    path: resolve(evidence, "coffee-good-followthrough.png"),
-  });
+  await sceneScreenshot("coffee-good-followthrough.png", 0);
 });
 
 test("missed coffee cannot become attendance and mobile conversation retains a courteous written follow-up", async () => {
@@ -823,3 +830,116 @@ test("a mission challenge takes a real fork, persists it, and distinguishes poor
     path: resolve(evidence, "mission-recovery-branch.png"),
   });
 });
+
+test(
+  "phone first-day overlay stays collapsible and leaves touch movement usable in portrait and landscape",
+  { tag: "@mobile-guide" },
+  async () => {
+    test.setTimeout(process.env.CI ? 240000 : 150000);
+    await page
+      .getByRole("button", { name: /Start your guided first day/ })
+      .click();
+    await expect(page.locator("#world-shell")).toHaveAttribute(
+      "data-tutorial-step",
+      "move",
+    );
+    const objective = page.locator(".objective-panel:not(.compact)");
+    const toggle = objective.locator(
+      '[data-testid="objective-toggle"]:visible',
+    );
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    const collapsedBox = await objective.boundingBox();
+    const toggleBox = await toggle.boundingBox();
+    expect(collapsedBox!.height).toBeLessThanOrEqual(112);
+    expect(toggleBox!.width).toBeGreaterThanOrEqual(44);
+    expect(toggleBox!.height).toBeGreaterThanOrEqual(44);
+    await expect(objective.locator("dl")).not.toBeVisible();
+    const initial = await save();
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect(toggle).toBeFocused();
+    await expect(objective.locator("dl")).toBeVisible();
+    await expect(objective).toContainText("Done when");
+    const expanded = await save();
+    expect(expanded.tutorial).toEqual(initial.tutorial);
+    expect(expanded.missions).toEqual(initial.missions);
+    expect(expanded.assistanceHistory).toEqual(initial.assistanceHistory);
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect(toggle).toBeFocused();
+    const position = await page
+      .locator("#world-shell")
+      .getAttribute("data-position");
+    const forward = page.getByRole("button", {
+      name: "Walk forward",
+      exact: true,
+    });
+    await expect(forward).toBeVisible();
+    const pad = await forward.boundingBox();
+    await page.mouse.move(pad!.x + pad!.width / 2, pad!.y + pad!.height / 2);
+    await page.mouse.down();
+    try {
+      await expect
+        .poll(
+          () => page.locator("#world-shell").getAttribute("data-position"),
+          { timeout: process.env.CI ? 60000 : 30000 },
+        )
+        .not.toBe(position);
+    } finally {
+      await page.mouse.up();
+    }
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    await sceneScreenshot("phone-guidance-collapsed-portrait.png", 0);
+    const progressed = await save();
+    expect(progressed.tutorial.status).toBe("active");
+    expect(progressed.clockMinutes).toBe(initial.clockMinutes);
+    await openPanel("Journal");
+    await closePanel();
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect((await save()).tutorial).toEqual(progressed.tutorial);
+    await page.reload();
+    await page.getByRole("button", { name: /Continue your day/ }).click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect((await save()).tutorial).toEqual(progressed.tutorial);
+    expect((await save()).missions).toEqual(progressed.missions);
+    await page.setViewportSize({ width: 844, height: 390 });
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    const landscape = await objective.boundingBox();
+    expect(landscape!.x).toBeGreaterThanOrEqual(0);
+    expect(landscape!.y).toBeGreaterThanOrEqual(0);
+    expect(landscape!.x + landscape!.width).toBeLessThanOrEqual(844);
+    expect(landscape!.y + landscape!.height).toBeLessThanOrEqual(390);
+    expect(landscape!.height).toBeLessThanOrEqual(112);
+    await expect(forward).toBeVisible();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    await sceneScreenshot("phone-guidance-collapsed-landscape.png", 0);
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect(toggle).toBeFocused();
+    await expect(objective.locator("dl")).toBeVisible();
+    const expandedLandscape = await objective.boundingBox();
+    expect(
+      expandedLandscape!.y + expandedLandscape!.height,
+    ).toBeLessThanOrEqual(390);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    await sceneScreenshot("phone-guidance-expanded-landscape.png", 0);
+    await toggle.click();
+    await page.reload();
+    await page.getByRole("button", { name: /Continue your day/ }).click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect((await save()).tutorial).toEqual(progressed.tutorial);
+  },
+);

@@ -126,6 +126,14 @@ function previousWorld(
       delete attempt.assistance;
       delete attempt.assistanceVerified;
       delete attempt.unaided;
+      // A genuine pre-city attempt has no opt-in branch graph or debrief fields.
+      // Keeping these new fields would make this a mislabeled current-format fixture.
+      delete attempt.branchVersion;
+      delete attempt.routeNodeId;
+      delete attempt.routeMarks;
+      delete attempt.outcome;
+      delete attempt.debrief;
+      delete attempt.relationshipStart;
     }
   expect(Object.keys(prior).sort()).toEqual(
     previousKeys

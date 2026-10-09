@@ -47,6 +47,11 @@ import {
   normalizeFloor,
 } from "./locations";
 import { PositionSynchronizer } from "./PositionSync";
+import {
+  cameraClearance,
+  containFloorCamera,
+  conversationCamera,
+} from "./camera";
 import "./world.css";
 
 export type WorldPosition = { x: number; z: number; yaw: number };
@@ -181,7 +186,7 @@ function Scene({
       camera.setViewOffset(
         size.width,
         size.height,
-        -0.23 * size.width,
+        (props.conversationContactId ? 0.18 : -0.23) * size.width,
         0,
         size.width,
         size.height,
@@ -195,6 +200,7 @@ function Scene({
   }, [
     camera,
     props.conversationFraming,
+    props.conversationContactId,
     props.showcase,
     size.width,
     size.height,
@@ -237,6 +243,7 @@ function Scene({
     ],
   );
   const previousReframe = useRef(props.cameraReframe ?? 0);
+  const sceneReadiness = useRef({ key: "", frames: 0 });
   useEffect(() => {
     const walls: Mesh[] = [];
     scene.traverse((object) => {
@@ -290,6 +297,22 @@ function Scene({
         2.65 + getFloorElevation(props.location, props.floor),
         current.current.z - Math.cos(controls.current.orbit) * 4.25,
       );
+    if (!callbacks.current.showcase) {
+      const contained = containFloorCamera(
+        camera.position,
+        props.location,
+        props.floor,
+      );
+      camera.position.set(contained.x, contained.y, contained.z);
+      camera.lookAt(
+        current.current.x + Math.sin(controls.current.orbit) * 0.55,
+        getFloorElevation(props.location, props.floor) + 1.18,
+        current.current.z + Math.cos(controls.current.orbit) * 0.55,
+      );
+    }
+    sceneReadiness.current = { key: "", frames: 0 };
+    const element = gl.domElement.closest<HTMLElement>(".am-world");
+    if (element) element.dataset.sceneSettled = "false";
     emitPosition(current.current);
   }, [props.location, props.floor]);
   useEffect(() => {
@@ -399,7 +422,7 @@ function Scene({
       input.orbit = area.rotation + Math.PI;
       input.path = [];
       input.recoverRequested = false;
-      next = { x: area.x, z: area.z };
+      next = { x: current.current.x, z: current.current.z };
       positionSync.current.reset();
       emitPosition(current.current);
       config.onWorldEvent?.({
@@ -653,26 +676,6 @@ function Scene({
       elevation + 1.25 + Math.sin(input.pitch) * 4.25,
       current.current.z - Math.cos(input.orbit) * 4.25,
     );
-    direction.copy(cameraPoint).sub(targetPoint);
-    const desiredDistance = direction.length();
-    direction.normalize();
-    ray.set(targetPoint, direction);
-    ray.far = desiredDistance;
-    const obstruction = ray.intersectObjects(
-      cameraWalls.current.filter((wall) => {
-        let parent = wall.parent;
-        while (parent) {
-          if (!parent.visible) return false;
-          parent = parent.parent;
-        }
-        return true;
-      }),
-      false,
-    )[0];
-    if (obstruction)
-      cameraPoint
-        .copy(targetPoint)
-        .addScaledVector(direction, Math.max(1.5, obstruction.distance - 0.18));
     const conversationPerson =
       focusObject.current?.kind === "npc" &&
       (!config.conversationContactId ||
@@ -691,27 +694,69 @@ function Scene({
             )
           : undefined;
     if (conversationPerson && config.paused) {
-      const object = conversationPerson,
-        yaw = Math.atan2(
-          object.x - current.current.x,
-          object.z - current.current.z,
-        );
-      targetPoint.set(object.x, elevation + 1.51, object.z);
-      cameraPoint.set(
-        current.current.x - Math.sin(yaw + 0.22) * 1.7,
-        elevation + 1.86,
-        current.current.z - Math.cos(yaw + 0.22) * 1.7,
+      const framing = conversationCamera(
+        conversationPerson,
+        current.current,
+        elevation,
       );
+      targetPoint.set(framing.target.x, framing.target.y, framing.target.z);
+      cameraPoint.set(framing.camera.x, framing.camera.y, framing.camera.z);
     }
     if (config.showcase) {
       targetPoint.set(-4, 25, -8);
       cameraPoint.set(84, 36, 98);
     }
+    if (!config.showcase) {
+      direction.copy(cameraPoint).sub(targetPoint);
+      const desiredDistance = direction.length();
+      direction.normalize();
+      ray.set(targetPoint, direction);
+      ray.far = desiredDistance;
+      const obstruction = ray.intersectObjects(
+        cameraWalls.current.filter((wall) => {
+          let parent = wall.parent;
+          while (parent) {
+            if (!parent.visible) return false;
+            parent = parent.parent;
+          }
+          return true;
+        }),
+        false,
+      )[0];
+      if (obstruction)
+        cameraPoint
+          .copy(targetPoint)
+          .addScaledVector(direction, cameraClearance(obstruction.distance));
+      const contained = containFloorCamera(cameraPoint, config.location, floor);
+      cameraPoint.set(contained.x, contained.y, contained.z);
+    }
     camera.position.lerp(
       cameraPoint,
       config.reducedMotion ? 1 : 1 - Math.exp(-delta * 7),
     );
+    if (!config.showcase) {
+      // Recheck the smoothed position too: a floor change or old orbit must never
+      // interpolate outside the opaque elevated room, even for one frame.
+      const contained = containFloorCamera(
+        camera.position,
+        config.location,
+        floor,
+      );
+      camera.position.set(contained.x, contained.y, contained.z);
+    }
     camera.lookAt(targetPoint);
+    const sceneKey = `${config.location}:${floor}:${config.conversationContactId ?? ""}`;
+    if (sceneReadiness.current.key !== sceneKey)
+      sceneReadiness.current = { key: sceneKey, frames: 0 };
+    sceneReadiness.current.frames =
+      camera.position.distanceTo(cameraPoint) < 0.06
+        ? sceneReadiness.current.frames + 1
+        : 0;
+    const element = gl.domElement.closest<HTMLElement>(".am-world");
+    if (element) {
+      element.dataset.sceneFloor = String(floor);
+      element.dataset.sceneSettled = String(sceneReadiness.current.frames >= 3);
+    }
     if (sample.current.position > 0.35) {
       sample.current.position = 0;
       if (

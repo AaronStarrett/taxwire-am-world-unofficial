@@ -28,6 +28,7 @@ vi.mock("react", async (importOriginal) => ({
 import {
   AvatarModel,
   characterStyle,
+  garmentSurfaceDepth,
   materialColor,
 } from "../src/world/Avatar";
 import { STRIDE_LENGTH, walkingPose } from "../src/world/gait";
@@ -183,6 +184,44 @@ describe("tailored procedural adults", () => {
     expect(reduced.groups[1].rotation.y).toBe(0);
     expect(reduced.groups[2].rotation.y).toBe(0);
   });
+});
+
+describe("visible tailored layers", () => {
+  it.each([0, 2])(
+    "keeps the shirt inset outside the actual chest in jacket variant %i",
+    (variant) => {
+      const { meshes } = buildAvatar(variant);
+      const shirtFront = meshes
+        .map((mesh) => mesh.geometry)
+        .find((geometry) => {
+          if (!geometry) return false;
+          geometry.computeBoundingBox();
+          return (
+            geometry.boundingBox!.min.y > 1.12 &&
+            geometry.boundingBox!.max.y > 1.42
+          );
+        });
+      expect(shirtFront).toBeDefined();
+      const position = shirtFront!.attributes.position;
+      const indices = shirtFront!.index!;
+      const shoulder = characterStyle(variant, "#49362b").shoulderWidth;
+      for (let index = 0; index < indices.count; index += 3) {
+        const center = new Vector3();
+        for (let corner = 0; corner < 3; corner++)
+          center.add(
+            new Vector3().fromBufferAttribute(
+              position,
+              indices.getX(index + corner),
+            ),
+          );
+        center.divideScalar(3);
+        if (center.y < 1.405)
+          expect(center.z).toBeGreaterThan(
+            garmentSurfaceDepth(center.x, center.y, shoulder) - 0.0001,
+          );
+      }
+    },
+  );
 });
 
 describe("gentle distance-driven gait", () => {

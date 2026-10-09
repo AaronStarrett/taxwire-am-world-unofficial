@@ -9,6 +9,7 @@ The original eight addresses remain in the same places, so earlier saves and gui
 - Walk with WASD or arrow keys, or the touch movement pad. Drag to rotate the camera; click a clear floor or pavement to walk there.
 - Press **E** or tap the nearby interaction cue for a person, workstation, document or lift. Walk close enough to see its name.
 - Use a lift to change floor. **R** recovers to a safe arrival on your current floor. The map directory also offers explicit travel to any listed floor.
+- On phones, the first-day guide starts as a small **Guide** button. Tap it to expand, use **Hide** to collapse it, and reopen whenever needed. This browser remembers your presentation choice; collapsing never skips a step or erases progress.
 - **M** opens the map, **J** the journal, **P** pauses and **Esc** closes a panel. Movement pauses while using work tools or typing.
 - Low quality, reduced motion, text scaling and the accessible workbench remain in Settings. The workbench runs the same decisions, clock and saved history without WebGL.
 

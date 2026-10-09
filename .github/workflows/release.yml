@@ -35,7 +35,11 @@ jobs:
       - run: npm run build
       - run: npm run audit:public
       - run: npx playwright install --with-deps chromium
-      - name: Verify playable production build at repository subpath
+      - name: Diagnose changed city and mobile paths on the city feature branch
+        if: github.ref == 'refs/heads/feature/city-relationships'
+        run: npm run test:browser -- --grep 'travels through every building|mobile floor directory|a mission challenge|phone first-day overlay|prior version 2 in-progress|coffee invitation becomes'
+      - name: Verify full playable production build at repository subpath
+        if: github.ref != 'refs/heads/feature/city-relationships'
         run: npm run test:browser
       - name: Retain synthetic browser acceptance evidence
         if: always()

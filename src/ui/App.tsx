@@ -576,9 +576,10 @@ export default function App() {
               navigateTo={navigation}
               cameraReframe={cameraReframe}
               conversationFraming={
-                panel === "guidance" &&
-                state.location === "hq" &&
-                (firstDay?.id === "mentor" || firstDay?.id === "desk")
+                panel === "conversation" ||
+                (panel === "guidance" &&
+                  state.location === "hq" &&
+                  (firstDay?.id === "mentor" || firstDay?.id === "desk"))
               }
               onWorldEvent={(event) =>
                 dispatch({ type: "TUTORIAL_WORLD", id: uid(), event })
@@ -723,7 +724,7 @@ export default function App() {
             </div>
             {firstDay || stage ? (
               <ObjectivePanel
-                key={`${firstDay?.id || stage?.id || "idle"}`}
+                key={`${state.learner.id}-${firstDay?.id || stage?.id || "idle"}`}
                 state={state}
                 dispatch={dispatch}
                 open={open}

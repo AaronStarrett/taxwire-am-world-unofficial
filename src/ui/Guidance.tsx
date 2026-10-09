@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
+import { defaultObjectiveCollapsed } from "./objectiveVisibility";
 import { content } from "../content";
 import {
   firstDayCustomerBrief,
@@ -41,6 +42,47 @@ export function ObjectivePanel(props: GuidanceProps) {
   const [explain, setExplain] = useState(false),
     [hint, setHint] = useState(0),
     [stuck, setStuck] = useState(false);
+  const visibilityKey = `taxwire-objective-collapsed:${state.learner.id}`;
+  const objectiveContentId = useId();
+  const objectiveToggle = useRef<HTMLButtonElement>(null);
+  const readCollapsed = () => {
+    if (compact) return false;
+    try {
+      const saved = localStorage.getItem(visibilityKey);
+      if (saved === "true" || saved === "false") return saved === "true";
+    } catch {
+      /* The guide works when browser storage is unavailable. */
+    }
+    return defaultObjectiveCollapsed(window.innerWidth, window.innerHeight);
+  };
+  const [collapsed, setCollapsed] = useState(readCollapsed);
+  useEffect(() => {
+    const resize = () => {
+      if (compact) return;
+      try {
+        const saved = localStorage.getItem(visibilityKey);
+        if (saved === "true" || saved === "false") return;
+      } catch {
+        /* Continue with a viewport-sized guide. */
+      }
+      setCollapsed(
+        defaultObjectiveCollapsed(window.innerWidth, window.innerHeight),
+      );
+    };
+    window.addEventListener("resize", resize);
+    return () => window.removeEventListener("resize", resize);
+  }, [compact, visibilityKey]);
+  const toggleObjective = () => {
+    const nextCollapsed = !collapsed;
+    setCollapsed(nextCollapsed);
+    requestAnimationFrame(() => objectiveToggle.current?.focus());
+    try {
+      localStorage.setItem(visibilityKey, String(nextCollapsed));
+    } catch {
+      /* A session-only preference still leaves the guide usable. */
+    }
+  };
+  const guideName = tutorial ? "guided first day" : "case objective";
   const next = recommendedMissionOrder.find(
     (id) => state.missions[id]?.status !== "completed",
   );
@@ -60,164 +102,204 @@ export function ObjectivePanel(props: GuidanceProps) {
   };
   return (
     <section
-      className={`objective-panel ${compact ? "compact" : ""}`}
+      className={`objective-panel ${compact ? "compact" : ""} ${collapsed && !compact ? "is-collapsed" : ""}`}
       aria-label="Current objective"
       data-tutorial-step={tutorial?.id || "none"}
+      data-collapsed={collapsed && !compact ? "true" : "false"}
     >
-      <div className="objective-label">
-        <span className="live-dot" />
-        {tutorial
-          ? `GUIDED FIRST DAY · ${state.tutorial.stepIndex + 1} / 15`
-          : mission
-            ? `${state.missions[mission.id]?.mode.toUpperCase()} CASE`
-            : "YOUR NEXT STEP"}
-      </div>
-      <h2>
-        {tutorial?.title ||
-          guide?.objective ||
-          "Build your account ownership skills"}
-      </h2>
-      <dl>
-        <dt>Where</dt>
-        <dd>
-          {tutorial?.where ||
-            (guide
-              ? `${guide.locationId} → ${guide.panel}`
-              : "Work tools → Academy")}
-        </dd>
-        <dt>Interact</dt>
-        <dd>
-          {guide?.interact ||
-            (tutorial?.id === "move"
-              ? "W / ↑ or click the floor; reach the marker"
-              : tutorial?.id === "camera"
-                ? "Drag the world, or choose Reframe camera"
-                : tutorial?.id === "mentor"
-                  ? "E near Morgan, or Talk to Morgan Vale"
-                  : tutorial?.id === "desk"
-                    ? "E near the work desk, or Open workstation tools"
-                    : tutorial?.tool
-                      ? `Open ${tutorial.tool}; complete the displayed action`
-                      : "Open your next learning activity")}
-        </dd>
-        <dt>Why</dt>
-        <dd>
-          {tutorial?.why ||
-            guide?.why ||
-            "Practice a small work cycle, then apply it to a different customer situation."}
-        </dd>
-        <dt>Done when</dt>
-        <dd>
-          {tutorial?.doneWhen ||
-            guide?.doneWhen ||
-            "You have reviewed your evidence and chosen the next learning task."}
-        </dd>
-      </dl>
-      <div className="guidance-actions">
+      {!compact && collapsed && (
         <button
-          onClick={() => {
-            record("show-location");
-            showWhere();
-          }}
+          className="objective-reopen"
+          ref={objectiveToggle}
+          data-testid="objective-toggle"
+          aria-label={`Expand ${guideName}`}
+          aria-expanded={false}
+          aria-controls={objectiveContentId}
+          onClick={toggleObjective}
         >
-          Show me where
+          <span aria-hidden="true">?</span>
+          <span>
+            {tutorial
+              ? `Guide · ${state.tutorial.stepIndex + 1}/15`
+              : "Current case"}
+            <small>Show objective</small>
+          </span>
+          <span aria-hidden="true">+</span>
         </button>
-        <button
-          onClick={() => {
-            record("explain");
-            setExplain(!explain);
-          }}
-        >
-          Explain this
-        </button>
-        <button
-          onClick={() => {
-            const level = Math.min(3, hint + 1) as 1 | 2 | 3;
-            record("hint", level);
-            setHint(level);
-          }}
-        >
-          Give me a hint
-        </button>
-        <button
-          onClick={() => {
-            record("stuck");
-            setStuck(!stuck);
-          }}
-        >
-          I'm stuck
-        </button>
-      </div>
-      {explain && (
-        <p className="mentor-help">
-          {guide?.teach ||
-            firstGuide?.teach ||
-            tutorial?.why ||
-            "Understand the request, find the evidence, decide the next step, coordinate the right people, and follow through."}
-        </p>
       )}
-      {hint > 0 && (
-        <p className="mentor-help">
-          <strong>Morgan · hint {hint}</strong>
-          <br />
-          {guide?.hints[hint - 1] ||
-            firstGuide?.hints[hint - 1] ||
-            tutorial?.hint ||
-            "Open the highlighted work tool. Record a confirmed fact, the missing evidence, its owner and your next check-in."}
-        </p>
-      )}
-      {stuck && (
-        <div className="stuck-help">
-          <p>
-            Close a panel with Esc to return. Your work stays saved. Use the map
-            to reach a room, then its labeled interaction. If a person is
-            unavailable, prepare a focused question and book a check-in in
-            Calendar.
-          </p>
-          <div className="guidance-actions">
-            <button onClick={() => open("guidance")}>
-              Open first-day guide
-            </button>
-            <button onClick={() => open("map")}>Open map</button>
-            <button onClick={() => props.reframe?.()}>Reframe camera</button>
-            <button onClick={() => open("settings")}>
-              Controls & recovery
-            </button>
-          </div>
-        </div>
-      )}
-      <div className="objective-footer">
-        <button
-          className="primary compact"
-          onClick={() =>
-            open(
-              tutorial
-                ? ((tutorial.tool || "guidance") as Panel)
-                : mission
-                  ? "mission"
-                  : "academy",
-            )
-          }
-        >
+      <div
+        id={objectiveContentId}
+        className="objective-content"
+        hidden={collapsed && !compact}
+      >
+        <div className="objective-label">
+          <span className="live-dot" />
           {tutorial
-            ? "Open this step"
+            ? `GUIDED FIRST DAY · ${state.tutorial.stepIndex + 1} / 15`
             : mission
-              ? "Continue case"
-              : "Choose next activity"}{" "}
-          →
-        </button>
-        <button className="text-button" onClick={() => open("journal")}>
-          Journal
-        </button>
-        <button className="text-button" onClick={() => open("settings")}>
-          Controls
-        </button>
+              ? `${state.missions[mission.id]?.mode.toUpperCase()} CASE`
+              : "YOUR NEXT STEP"}
+          {!compact && !collapsed && (
+            <button
+              className="objective-collapse"
+              ref={objectiveToggle}
+              data-testid="objective-toggle"
+              aria-label={`Collapse ${guideName}`}
+              aria-expanded={true}
+              aria-controls={objectiveContentId}
+              onClick={toggleObjective}
+            >
+              Hide <span aria-hidden="true">−</span>
+            </button>
+          )}
+        </div>
+        <h2>
+          {tutorial?.title ||
+            guide?.objective ||
+            "Build your account ownership skills"}
+        </h2>
+        <dl>
+          <dt>Where</dt>
+          <dd>
+            {tutorial?.where ||
+              (guide
+                ? `${guide.locationId} → ${guide.panel}`
+                : "Work tools → Academy")}
+          </dd>
+          <dt>Interact</dt>
+          <dd>
+            {guide?.interact ||
+              (tutorial?.id === "move"
+                ? "W / ↑ or click the floor; reach the marker"
+                : tutorial?.id === "camera"
+                  ? "Drag the world, or choose Reframe camera"
+                  : tutorial?.id === "mentor"
+                    ? "E near Morgan, or Talk to Morgan Vale"
+                    : tutorial?.id === "desk"
+                      ? "E near the work desk, or Open workstation tools"
+                      : tutorial?.tool
+                        ? `Open ${tutorial.tool}; complete the displayed action`
+                        : "Open your next learning activity")}
+          </dd>
+          <dt>Why</dt>
+          <dd>
+            {tutorial?.why ||
+              guide?.why ||
+              "Practice a small work cycle, then apply it to a different customer situation."}
+          </dd>
+          <dt>Done when</dt>
+          <dd>
+            {tutorial?.doneWhen ||
+              guide?.doneWhen ||
+              "You have reviewed your evidence and chosen the next learning task."}
+          </dd>
+        </dl>
+        <div className="guidance-actions">
+          <button
+            onClick={() => {
+              record("show-location");
+              showWhere();
+            }}
+          >
+            Show me where
+          </button>
+          <button
+            onClick={() => {
+              record("explain");
+              setExplain(!explain);
+            }}
+          >
+            Explain this
+          </button>
+          <button
+            onClick={() => {
+              const level = Math.min(3, hint + 1) as 1 | 2 | 3;
+              record("hint", level);
+              setHint(level);
+            }}
+          >
+            Give me a hint
+          </button>
+          <button
+            onClick={() => {
+              record("stuck");
+              setStuck(!stuck);
+            }}
+          >
+            I'm stuck
+          </button>
+        </div>
+        {explain && (
+          <p className="mentor-help">
+            {guide?.teach ||
+              firstGuide?.teach ||
+              tutorial?.why ||
+              "Understand the request, find the evidence, decide the next step, coordinate the right people, and follow through."}
+          </p>
+        )}
+        {hint > 0 && (
+          <p className="mentor-help">
+            <strong>Morgan · hint {hint}</strong>
+            <br />
+            {guide?.hints[hint - 1] ||
+              firstGuide?.hints[hint - 1] ||
+              tutorial?.hint ||
+              "Open the highlighted work tool. Record a confirmed fact, the missing evidence, its owner and your next check-in."}
+          </p>
+        )}
+        {stuck && (
+          <div className="stuck-help">
+            <p>
+              Close a panel with Esc to return. Your work stays saved. Use the
+              map to reach a room, then its labeled interaction. If a person is
+              unavailable, prepare a focused question and book a check-in in
+              Calendar.
+            </p>
+            <div className="guidance-actions">
+              <button onClick={() => open("guidance")}>
+                Open first-day guide
+              </button>
+              <button onClick={() => open("map")}>Open map</button>
+              <button onClick={() => props.reframe?.()}>Reframe camera</button>
+              <button onClick={() => open("settings")}>
+                Controls & recovery
+              </button>
+            </div>
+          </div>
+        )}
+        <div className="objective-footer">
+          <button
+            className="primary compact"
+            onClick={() =>
+              open(
+                tutorial
+                  ? ((tutorial.tool || "guidance") as Panel)
+                  : mission
+                    ? "mission"
+                    : "academy",
+              )
+            }
+          >
+            {tutorial
+              ? "Open this step"
+              : mission
+                ? "Continue case"
+                : "Choose next activity"}{" "}
+            →
+          </button>
+          <button className="text-button" onClick={() => open("journal")}>
+            Journal
+          </button>
+          <button className="text-button" onClick={() => open("settings")}>
+            Controls
+          </button>
+        </div>
+        {!tutorial && !mission && next && (
+          <p className="muted">
+            Recommended: {content.missions.find((m) => m.id === next)?.title}
+          </p>
+        )}
       </div>
-      {!tutorial && !mission && next && (
-        <p className="muted">
-          Recommended: {content.missions.find((m) => m.id === next)?.title}
-        </p>
-      )}
     </section>
   );
 }

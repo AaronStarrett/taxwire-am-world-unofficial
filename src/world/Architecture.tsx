@@ -819,11 +819,13 @@ function Block({
   size,
   color = "#8d9b9e",
   surface = "metal",
+  obstacle = false,
 }: {
   at: [number, number, number];
   size: [number, number, number];
   color?: string;
   surface?: "metal" | "stone" | "wood" | "wall" | "screen";
+  obstacle?: boolean;
 }) {
   const material = useSurface(surface, color);
   const geometry = useMemo(
@@ -838,6 +840,7 @@ function Block({
       material={material}
       castShadow
       receiveShadow
+      userData={{ cameraObstacle: obstacle }}
     />
   );
 }
@@ -1126,6 +1129,7 @@ function UpperInterior({
           size={[12, 3.4, 0.14]}
           color="#d0d4ce"
           surface="wall"
+          obstacle
         />
         <Shelf
           x={-3.8}
@@ -1137,6 +1141,7 @@ function UpperInterior({
           at={[0, 1.8, -4.8]}
           size={[4.7, 3.5, 0.07]}
           color={warm ? "#777b6e" : "#4b6266"}
+          obstacle
         />
         <Sign
           title={floor.name}

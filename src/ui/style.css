@@ -3037,3 +3037,169 @@ td input {
     max-height: calc(100% - 260px);
   }
 }
+/* A guide is a tool, not a barrier to walking. Its visibility never changes progress. */
+.objective-content[hidden] {
+  display: none;
+}
+.objective-panel.is-collapsed {
+  width: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  backdrop-filter: none;
+  box-shadow: none;
+  overflow: visible;
+  max-height: none;
+}
+.objective-reopen {
+  min-height: 48px;
+  min-width: 144px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  padding: 9px 13px;
+  color: #eaf0e3;
+  background: #1b373cf2;
+  border: 1px solid #9fb5aa;
+  border-radius: 7px;
+  box-shadow: 0 4px 16px #122c3a33;
+  font-size: 12px;
+}
+.objective-reopen > span:first-child {
+  display: grid;
+  place-items: center;
+  width: 23px;
+  height: 23px;
+  border: 1px solid #b5caa0;
+  border-radius: 50%;
+  color: #d0e2b4;
+}
+.objective-reopen small {
+  display: block;
+  font-size: 9px;
+  margin-top: 3px;
+  color: #bfcec1;
+}
+.objective-reopen > span:last-child {
+  margin-left: auto;
+  font-size: 20px;
+  font-weight: 300;
+}
+.objective-label {
+  min-height: 34px;
+}
+.objective-collapse {
+  margin-left: auto;
+  min-height: 44px;
+  min-width: 60px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid #bccfbb;
+  border-radius: 5px;
+  background: #e9f0e4;
+  color: #315846;
+  font-size: 11px;
+  letter-spacing: 0;
+  padding: 4px 9px;
+}
+.objective-collapse span {
+  font-size: 19px;
+}
+.topbar {
+  padding-left: max(13px, env(safe-area-inset-left));
+  padding-right: max(13px, env(safe-area-inset-right));
+}
+.statusbar {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+@media (max-width: 760px), (max-height: 500px) {
+  .objective-panel:not(.compact) {
+    top: 128px;
+    right: max(12px, env(safe-area-inset-right));
+    width: min(
+      315px,
+      calc(100% - 24px - env(safe-area-inset-left) - env(safe-area-inset-right))
+    );
+    max-height: calc(100% - 366px - env(safe-area-inset-bottom));
+    overscroll-behavior: contain;
+  }
+  .objective-panel.is-collapsed {
+    top: 78px;
+    width: auto;
+    max-height: none;
+  }
+  .objective-reopen {
+    min-width: 144px;
+    min-height: 48px;
+  }
+  .objective-label {
+    letter-spacing: 0.6px;
+    font-size: 8px;
+  }
+  .dock {
+    bottom: max(14px, env(safe-area-inset-bottom));
+  }
+  .notification {
+    bottom: max(95px, calc(env(safe-area-inset-bottom) + 80px));
+    max-width: calc(100% - 24px);
+  }
+}
+@media (max-height: 500px) and (min-width: 761px) {
+  .topbar {
+    height: 48px;
+  }
+  .location-tag {
+    top: 10px;
+    left: max(12px, env(safe-area-inset-left));
+    min-width: 195px;
+    padding: 8px 11px;
+  }
+  .objective-panel:not(.compact) {
+    top: 12px;
+    right: max(12px, env(safe-area-inset-right));
+    max-height: calc(100% - 88px - env(safe-area-inset-bottom));
+    width: 300px;
+  }
+  .objective-panel.is-collapsed {
+    width: auto;
+    max-height: none;
+  }
+  .world-controls {
+    display: none;
+  }
+  .dock {
+    bottom: 10px;
+    padding: 4px;
+  }
+  .dock button {
+    min-width: 40px;
+    padding: 4px 6px;
+  }
+}
+@media (max-width: 760px), (max-height: 500px) {
+  .app .world-touch-pad {
+    left: max(12px, env(safe-area-inset-left));
+  }
+  .app .world-elevator {
+    left: max(12px, env(safe-area-inset-left));
+  }
+}
+@media (max-height: 500px) {
+  .app,
+  .app .am-world {
+    min-height: 0;
+  }
+}
+@media (max-height: 500px) and (min-width: 761px) {
+  .app .world-elevator {
+    left: max(230px, calc(env(safe-area-inset-left) + 230px));
+    top: 10px;
+  }
+  .app .world-touch-pad {
+    bottom: 82px;
+  }
+}
