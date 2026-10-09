@@ -4,16 +4,19 @@ import { competencies } from "./competencies";
 import { sources } from "./sources";
 import { coreMissions } from "./missions-core";
 import { advancedMissions, capstoneMissions } from "./missions-advanced";
+import { authorMissionBranches } from "./branching";
 import { documents } from "./mission-tools";
 
 export const content: ContentPack = {
-  version: "twaw-2026.10.03-v2",
+  version: "twaw-2026.10.09-branches-v1",
   competencies,
   accounts,
   contacts,
   sources,
   documents,
-  missions: [...coreMissions, ...advancedMissions, ...capstoneMissions],
+  missions: [...coreMissions, ...advancedMissions, ...capstoneMissions].map(
+    authorMissionBranches,
+  ),
   bootcamp: [
     {
       session: 1,

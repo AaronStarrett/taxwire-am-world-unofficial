@@ -1,4 +1,5 @@
-import type { ContentPack, Dimension } from "../content/types";
+import type { ConversationAction } from "./conversations";
+import type { BranchOutcome, ContentPack, Dimension } from "../content/types";
 
 export type LearningLevel =
   "not_started" | "introduced" | "practiced" | "demonstrated";
@@ -91,6 +92,21 @@ export interface EvidenceTrace {
   calculation?: { submitted: number; expected: number; correct: boolean };
   artifactId?: string;
 }
+export interface BranchDebrief {
+  outcome: BranchOutcome;
+  title: string;
+  summary: string;
+  decisions: string[];
+  nextSteps: string[];
+  completedStages: number;
+  totalStages: number;
+  relationship: {
+    trustChange: number;
+    riskChange: number;
+    trust: number;
+    risk: number;
+  };
+}
 export interface Attempt {
   id: string;
   mode: AttemptMode;
@@ -105,6 +121,12 @@ export interface Attempt {
   version: number;
   overdue: boolean;
   remediationOf?: string;
+  branchVersion?: 1;
+  routeNodeId?: string;
+  routeMarks?: ("mixed" | "recovery")[];
+  outcome?: BranchOutcome;
+  debrief?: BranchDebrief;
+  relationshipStart?: { trust: number; risk: number };
   assistance?: AssistanceRecord[];
   assistanceVerified?: boolean;
   unaided?: boolean;
@@ -231,6 +253,7 @@ export interface GameState {
     | "Strategic Account Leader";
 }
 export type GameAction =
+  | ConversationAction
   | { type: "TUTORIAL_START"; id: string; replay?: boolean }
   | { type: "TUTORIAL_SKIP"; id: string }
   | { type: "TUTORIAL_WORLD"; id: string; event: TutorialWorldEvent }
@@ -264,6 +287,8 @@ export type GameAction =
       id: string;
     }
   | { type: "TRAVEL"; location: string }
+  | { type: "ENTER_LOCATION"; location: string }
+  | { type: "SET_FLOOR"; location: string; floor: number }
   | { type: "WAIT"; minutes: number }
   | { type: "END_DAY" }
   | {

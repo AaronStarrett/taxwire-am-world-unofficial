@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   colliders,
+  WORLD_BOUNDARY,
   findPath,
   isWalkable,
   moveWithCollision,
@@ -86,7 +87,7 @@ describe("walkable training district", () => {
   });
   it("bounds navigation and rejects non-finite positions", () => {
     expect(isWalkable({ x: NaN, z: 0 })).toBe(false);
-    expect(isWalkable({ x: 40, z: 0 })).toBe(false);
+    expect(isWalkable({ x: WORLD_BOUNDARY + 1, z: 0 })).toBe(false);
     expect(colliders.length).toBeGreaterThan(80);
     expect(findPath({ x: 0, z: 5 }, { x: 200, z: 0 })).toEqual([]);
   });

@@ -1,3 +1,4 @@
+import { validateRelationshipConversations } from "./conversations";
 import { createState, SAVE_VERSION } from "./index";
 import type { GameState } from "./types";
 import {
@@ -258,6 +259,32 @@ export function migrateState(data: unknown): {
     "extensions",
   ] as const)
     if (!isRecord(state[field])) throw new Error(`Invalid ${field} in save.`);
+  const navigation = state.extensions.cityNavigation;
+  if (
+    isRecord(navigation) &&
+    typeof navigation.version === "number" &&
+    navigation.version > 1
+  )
+    throw new UnsupportedSaveVersion(
+      "Save contains a newer city-navigation version; it is never silently downgraded.",
+    );
+  if (
+    state.extensions.relationshipConversations !== undefined &&
+    !validateRelationshipConversations(
+      state.extensions.relationshipConversations,
+    )
+  ) {
+    const value = state.extensions.relationshipConversations;
+    if (
+      isRecord(value) &&
+      typeof value.version === "number" &&
+      value.version > 1
+    )
+      throw new UnsupportedSaveVersion(
+        "Save contains a newer relationship-conversation version; it is never silently downgraded.",
+      );
+    throw new Error("Invalid versioned relationship-conversation history.");
+  }
   if (
     typeof state.location !== "string" ||
     (state.activeMissionId !== null &&
@@ -291,6 +318,61 @@ export function migrateState(data: unknown): {
         !finiteInteger(attempt.startedAt)
       )
         throw new Error("Invalid attempt history in save.");
+      if (attempt.branchVersion !== undefined && attempt.branchVersion !== 1)
+        throw new UnsupportedSaveVersion(
+          "Save contains an unsupported case-branch version; history is never silently downgraded.",
+        );
+      if (
+        attempt.branchVersion === 1 &&
+        ((attempt.routeNodeId !== undefined &&
+          typeof attempt.routeNodeId !== "string") ||
+          (attempt.routeMarks !== undefined &&
+            (!Array.isArray(attempt.routeMarks) ||
+              !attempt.routeMarks.every((mark) =>
+                ["mixed", "recovery"].includes(mark),
+              ))) ||
+          (attempt.outcome !== undefined &&
+            !["good", "mixed", "poor", "recovery"].includes(attempt.outcome)) ||
+          (attempt.relationshipStart !== undefined &&
+            (!isRecord(attempt.relationshipStart) ||
+              !Number.isFinite(attempt.relationshipStart.trust) ||
+              !Number.isFinite(attempt.relationshipStart.risk))))
+      )
+        throw new Error("Invalid persisted case decision route.");
+      if (
+        attempt.branchVersion === 1 &&
+        attempt.endedAt === undefined &&
+        progress.status === "in_progress" &&
+        !attempt.routeNodeId
+      )
+        throw new Error(
+          "Active case decision route is missing its current node.",
+        );
+      if (attempt.debrief !== undefined) {
+        const debrief = attempt.debrief;
+        if (
+          !isRecord(debrief) ||
+          !["good", "mixed", "poor", "recovery"].includes(
+            String(debrief.outcome),
+          ) ||
+          typeof debrief.title !== "string" ||
+          typeof debrief.summary !== "string" ||
+          !strings(debrief.decisions) ||
+          !strings(debrief.nextSteps) ||
+          !finiteInteger(debrief.completedStages) ||
+          !finiteInteger(debrief.totalStages) ||
+          !isRecord(debrief.relationship) ||
+          ![
+            debrief.relationship.trustChange,
+            debrief.relationship.riskChange,
+            debrief.relationship.trust,
+            debrief.relationship.risk,
+          ].every(
+            (value) => typeof value === "number" && Number.isFinite(value),
+          )
+        )
+          throw new Error("Invalid case-branch debrief.");
+      }
       if (
         (attempt.assistance !== undefined &&
           (!Array.isArray(attempt.assistance) ||

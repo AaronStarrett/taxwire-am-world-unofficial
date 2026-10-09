@@ -1,3 +1,7 @@
+import {
+  applyConversationAction,
+  reconcileConversationAppointments,
+} from "./conversations";
 import type {
   Choice,
   ContentPack,
@@ -12,6 +16,13 @@ import type {
   GameState,
   MissionProgress,
 } from "./types";
+import { readCityNavigation, unsupportedCityNavigation } from "./navigation";
+import {
+  applyBranchRoute,
+  branchRoute,
+  finalizeBranchDebrief,
+  missionNode,
+} from "./branching";
 import {
   applyTutorialAction,
   createTutorial,
@@ -32,6 +43,9 @@ export * from "./types";
 export * from "./time";
 export * from "./money";
 export * from "./tutorial";
+export * from "./branching";
+export * from "./conversations";
+export * from "./navigation";
 export {
   exportProgress,
   previewImport,
@@ -151,9 +165,11 @@ export function activeStep(
   );
   if (!mission) return undefined;
   const progress = state.missions[mission.id];
-  return progress?.status === "in_progress"
-    ? mission.steps[progress.stepIndex]
-    : undefined;
+  if (progress?.status !== "in_progress") return undefined;
+  const attempt = currentAttempt(progress);
+  return attempt?.branchVersion === 1 && attempt.routeNodeId
+    ? missionNode(mission, attempt.routeNodeId)
+    : mission.steps[progress.stepIndex];
 }
 export function scoreDimensions(scores: Record<Dimension, number>): number {
   return Math.round(
@@ -206,7 +222,7 @@ function canSpend(state: GameState, minutes: number): boolean {
     minutes < WORKDAY_MINUTES - (state.clockMinutes % WORKDAY_MINUTES)
   );
 }
-function spend(state: GameState, minutes: number): void {
+function spend(state: GameState, minutes: number, content: ContentPack): void {
   state.clockMinutes += minutes;
   state.day = dayAt(state.clockMinutes);
   for (const task of state.tasks)
@@ -242,6 +258,7 @@ function spend(state: GameState, minutes: number): void {
       );
     }
   }
+  reconcileConversationAppointments(state, content);
 }
 function rememberAction(state: GameState, action: GameAction): boolean {
   if (!("id" in action)) return true;
@@ -331,6 +348,17 @@ function startMission(
     fingerprint: mission.fingerprint,
     version: mission.version,
     overdue: false,
+    ...(mission.branching
+      ? {
+          branchVersion: mission.branching.version,
+          routeNodeId: mission.branching.startStepId,
+          routeMarks: [],
+          relationshipStart: {
+            trust: state.accountHealth[mission.accountId]?.trust ?? 50,
+            risk: state.accountHealth[mission.accountId]?.risk ?? 30,
+          },
+        }
+      : {}),
     assistance: [],
     assistanceVerified: true,
     unaided: mode === "independent",
@@ -403,7 +431,11 @@ function completeAttempt(
   attempt.passed =
     attempt.score >= PASS_SCORE &&
     attempt.criticalFailures.length === 0 &&
-    outstanding.length === 0;
+    outstanding.length === 0 &&
+    attempt.outcome !== "poor" &&
+    (!attempt.branchVersion ||
+      mission.steps.every((step) => progress.evidenceIds.includes(step.id)));
+  finalizeBranchDebrief(state, mission, progress, attempt);
   const independentEvidence =
     attempt.passed &&
     attempt.mode === "independent" &&
@@ -478,6 +510,9 @@ function completeAttempt(
       mode: attempt.mode,
       assistanceCount: attempt.assistance?.length ?? 0,
       unaided: independentEvidence,
+      ...(attempt.outcome
+        ? { outcome: attempt.outcome, debrief: attempt.debrief }
+        : {}),
     },
   );
   notify(
@@ -504,6 +539,12 @@ function act(
   const choice = step.choices.find((item) => item.id === action.choiceId);
   if (!attempt || !choice)
     return notify(state, "Choose an available authored action.");
+  const route = branchRoute(mission, attempt, step.id, choice.id);
+  if (attempt.branchVersion && !route)
+    return notify(
+      state,
+      "This saved decision route does not match the available authored case graph. Its history is preserved; use a compatible case version before continuing.",
+    );
   if (
     attempt.fingerprint !== mission.fingerprint ||
     attempt.version !== mission.version
@@ -664,7 +705,11 @@ function act(
       evidence: [],
       missionId: mission.id,
     });
-  if (backed && step.kind === "followup")
+  if (
+    backed &&
+    step.kind === "followup" &&
+    (!attempt.branchVersion || route?.verifiesTasks)
+  )
     for (const task of state.tasks.filter(
       (item) => item.missionId === mission.id && item.status === "open",
     )) {
@@ -715,19 +760,33 @@ function act(
     health.risk = bounded(health.risk + riskChange);
     health.evidence = unique([...health.evidence, artifactId]);
   }
-  spend(state, duration);
-  if (backed) progress.stepIndex += 1;
+  spend(state, duration, content);
+  if (backed && mission.steps.some((item) => item.id === step.id))
+    progress.stepIndex += 1;
+  const followsRoute = !!route && result.correct !== false;
+  if (followsRoute) applyBranchRoute(mission, progress, attempt, route);
   event(state, "action", `${step.title}: ${choice.feedback}`, mission.id, {
     stepId: step.id,
     choiceId: choice.id,
     evidenceIds,
     artifactId,
     duration,
+    ...(followsRoute
+      ? {
+          route: route.label,
+          nextNodeId: route.nextStepId,
+          ending: route.ending,
+        }
+      : {}),
   });
   notify(state, choice.feedback);
-  if (choice.criticalFailure || progress.stepIndex >= mission.steps.length)
+  if (
+    choice.criticalFailure ||
+    (followsRoute && route.ending) ||
+    (!attempt.branchVersion && progress.stepIndex >= mission.steps.length)
+  )
     completeAttempt(state, mission, progress, attempt);
-  else if (!backed)
+  else if (!backed && !followsRoute)
     notify(
       state,
       "Review the feedback and retry this step with corrected evidence. This action remains in the audit trail.",
@@ -746,6 +805,22 @@ export function transition(
   syncContent(state, content);
   if (!rememberAction(state, action)) return state;
   switch (action.type) {
+    case "START_CONVERSATION":
+    case "TALK":
+    case "CLOSE_CONVERSATION": {
+      const result = applyConversationAction(state, action, content);
+      if (!result.accepted) return notify(state, result.message);
+      accepted(state, action);
+      if (result.minutes) spend(state, result.minutes, content);
+      event(state, "relationship-conversation", result.message, undefined, {
+        npcId: action.npcId,
+        action: action.type,
+        ...(action.type === "TALK"
+          ? { nodeId: action.nodeId, choiceId: action.choiceId }
+          : {}),
+      });
+      return notify(state, result.message);
+    }
     case "TUTORIAL_START":
     case "TUTORIAL_SKIP":
     case "TUTORIAL_WORLD":
@@ -846,7 +921,78 @@ export function transition(
     }
     case "ACT":
       return act(state, action, content);
+    case "ENTER_LOCATION": {
+      if (unsupportedCityNavigation(state))
+        return notify(
+          state,
+          "This save has a newer city-navigation version; it is preserved without changes.",
+        );
+      const locations = [
+        "home",
+        "hq",
+        "research",
+        "operations",
+        "harborworks",
+        "cedarline",
+        "cafe",
+        "academy",
+      ];
+      if (!locations.includes(action.location))
+        return notify(state, "Unknown walkable building.");
+      if (readCityNavigation(state).floor > 0)
+        return notify(
+          state,
+          "Return to the ground floor before entering another building.",
+        );
+      if (state.location === action.location) return state;
+      // The world reports genuine doorway crossings. Walking updates logical
+      // presence, never teleports or advances the deliberate business clock.
+      state.location = action.location;
+      state.extensions.cityNavigation = {
+        version: 1,
+        location: action.location,
+        floor: 0,
+      };
+      state.visitedLocations = unique([
+        ...state.visitedLocations,
+        action.location,
+      ]);
+      event(
+        state,
+        "building-entered",
+        `Entered ${action.location} on foot; the business clock is unchanged.`,
+      );
+      return state;
+    }
+    case "SET_FLOOR": {
+      if (unsupportedCityNavigation(state))
+        return notify(
+          state,
+          "This save has a newer city-navigation version; it is preserved without changes.",
+        );
+      if (
+        action.location !== state.location ||
+        !Number.isInteger(action.floor) ||
+        action.floor < 0 ||
+        action.floor > 30
+      )
+        return notify(
+          state,
+          "Choose an available floor in your current building.",
+        );
+      state.extensions.cityNavigation = {
+        version: 1,
+        location: action.location,
+        floor: action.floor,
+      };
+      return state;
+    }
     case "TRAVEL": {
+      if (unsupportedCityNavigation(state))
+        return notify(
+          state,
+          "This save has a newer city-navigation version; it is preserved without changes.",
+        );
       const known = new Set([
         "home",
         "hq",
@@ -873,8 +1019,13 @@ export function transition(
       const studyTravel = state.tutorial.status === "active";
       if (!studyTravel && !canSpend(state, 10))
         return notify(state, "Close the working day before traveling.");
-      if (!studyTravel) spend(state, 10);
+      if (!studyTravel) spend(state, 10, content);
       state.location = action.location;
+      state.extensions.cityNavigation = {
+        version: 1,
+        location: action.location,
+        floor: 0,
+      };
       state.visitedLocations = unique([
         ...state.visitedLocations,
         action.location,
@@ -897,7 +1048,7 @@ export function transition(
           state,
           "Wait must fit the remaining workday and be 1–240 business minutes. Study and pause do not advance this clock.",
         );
-      spend(state, action.minutes);
+      spend(state, action.minutes, content);
       event(state, "wait", `Waited ${action.minutes} business minutes.`);
       return state;
     }
@@ -921,7 +1072,7 @@ export function transition(
       const nextDay = state.day + 1;
       state.clockMinutes = (nextDay - 1) * WORKDAY_MINUTES;
       state.day = nextDay;
-      spend(state, 0);
+      spend(state, 0, content);
       return notify(
         state,
         `${formatTime(state.clockMinutes)}. Review commitments and buffers before starting.`,

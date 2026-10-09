@@ -11,3 +11,10 @@
 - A reopened/copied synthetic Chrome test profile crashed the browser process during native download. Fresh-profile native backup, import and full twelve-case export/readback passed; the copied-profile crash's browser-internal cause remains unidentified. It is not counted as successful native-export evidence.
 - Keyboard alternatives, menu navigation, click paths, reduced motion, text scaling and fallback are implemented. Full key rebinding and screen-reader testing by a human remain unverified.
 - CI jobs/artifacts are bounded. Public demo availability remains subject to GitHub Pages quotas and account permissions; see BUILD_STATE.md for actual release evidence.
+
+## City-edition scope
+
+- The city and people are original procedural, semi-realistic game art. They are not photographic assets. Upper floors use several differentiated furnished layout families with contextual work tools; not every floor is a separately authored mission.
+- Contact conversations are bounded authored graphs using each person's role, account, knowledge, availability and saved relationship. They are not generative chat or autonomous offscreen people. Café appointments, attendance and follow-up are simulated locally.
+- Every new case attempt has choice-dependent paths and outcomes. Earlier in-progress attempts retain their original linear contract for compatibility. The guided first-day controls tutorial remains sequential.
+- City-edition browser acceptance is recorded separately in BUILD_STATE.md. This cloud workspace can run lint, TypeScript, unit tests and production builds, but its browser process is restricted; live 3D acceptance must be established by the repository's gated browser runner. A supported cloud browser can inspect the published fallback but does not provide WebGL hardware-performance evidence.

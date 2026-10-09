@@ -284,7 +284,11 @@ function mergeExtensions(
       key === "sourceEdition" ||
       key === "caseFingerprints" ||
       key === "importProvenance" ||
-      key === "remediatedMissionIds"
+      key === "remediatedMissionIds" ||
+      // Engine scene/session checkpoints are kept in import provenance, never
+      // activated by a portable training-history merge without their world data.
+      key === "cityNavigation" ||
+      key === "relationshipConversations"
     )
       continue;
     if (!(key in output)) output[key] = structuredClone(value);

@@ -1,7 +1,29 @@
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    {
+      name: "public-release-identity",
+      generateBundle() {
+        this.emitFile({
+          type: "asset",
+          fileName: "release.json",
+          source: JSON.stringify(
+            {
+              format: "taxwire-world-release",
+              edition: "city-relationships-2026-10",
+              commit: /^[a-f0-9]{40}$/.test(process.env.GITHUB_SHA || "")
+                ? process.env.GITHUB_SHA
+                : "local-build",
+            },
+            null,
+            2,
+          ),
+        });
+      },
+    },
+  ],
   base: process.env.VITE_BASE_PATH || "./",
   build: {
     sourcemap: false,

@@ -17,7 +17,7 @@ import {
 } from "../engine";
 import type { GameAction, GameState, TrainingExport } from "../engine/types";
 import { formatTime, minuteOfDay } from "../engine/time";
-import { locations } from "../world/locations";
+import { locations, getBuildingFloors } from "../world/locations";
 import { ObjectivePanel, FirstDayTools, MentorWelcome } from "./Guidance";
 import { tutorialObjective } from "../engine/tutorial";
 import {
@@ -29,8 +29,10 @@ import {
 } from "../content/guidance";
 import { DISCLAIMER, download, uid } from "./App";
 import { Portrait } from "./Portrait";
+import { ConversationPanel } from "./Conversations";
 export type Panel =
   | "guidance"
+  | "conversation"
   | "missions"
   | "mission"
   | "map"
@@ -60,6 +62,8 @@ interface Props {
   dispatch: (a: GameAction) => void;
   setState: Dispatch<SetStateAction<GameState>>;
   go: (id: string) => void;
+  floor: number;
+  changeFloor: (locationId: string, floor: number) => void;
   profiles: { id: string; displayName: string }[];
   changeProfile: (id: string) => Promise<void>;
   newProfile: () => void;
@@ -69,6 +73,8 @@ interface Props {
   showWhere: () => void;
   reframe: () => void;
   guidanceLocation?: string;
+  contactId?: string;
+  selectContact: (id: string) => void;
 }
 const nav: [Panel, string, string][] = [
   ["guidance", "First-day guide", "?"],
@@ -91,6 +97,7 @@ const nav: [Panel, string, string][] = [
 ];
 const titles: Record<Panel, string> = {
   guidance: "Your guide to the working day",
+  conversation: "A conversation that matters",
   missions: "Choose your next case",
   mission: "Your working case",
   map: "A district built for your work",
@@ -244,7 +251,7 @@ export default function Workbench(props: Props) {
   );
   return (
     <div
-      className={`workbench-overlay ${panel === "guidance" && state.location === "hq" && (firstDay?.id === "mentor" || firstDay?.id === "desk") ? "mentor-conversation" : ""}`}
+      className={`workbench-overlay ${panel === "conversation" ? "contact-conversation" : ""} ${panel === "guidance" && state.location === "hq" && (firstDay?.id === "mentor" || firstDay?.id === "desk") ? "mentor-conversation" : ""}`}
     >
       <section
         className="workbench"
@@ -325,15 +332,26 @@ export default function Workbench(props: Props) {
                 </p>
               </details>
             )}
-            {(firstDay || state.activeMissionId) && (
-              <ObjectivePanel
-                key={`${firstDay?.id || step?.id}-${panel}`}
-                compact
+            {panel !== "conversation" &&
+              (firstDay || state.activeMissionId) && (
+                <ObjectivePanel
+                  key={`${firstDay?.id || step?.id}-${panel}`}
+                  compact
+                  state={state}
+                  dispatch={dispatch}
+                  open={open}
+                  showWhere={props.showWhere}
+                  reframe={props.reframe}
+                />
+              )}
+            {panel === "conversation" && (
+              <ConversationPanel
                 state={state}
                 dispatch={dispatch}
-                open={open}
-                showWhere={props.showWhere}
-                reframe={props.reframe}
+                contactId={props.contactId}
+                selectContact={props.selectContact}
+                go={go}
+                changeFloor={props.changeFloor}
               />
             )}
             {panel === "guidance" && (
@@ -603,9 +621,10 @@ export default function Workbench(props: Props) {
             {panel === "map" && (
               <>
                 <p className="panel-intro">
-                  Walk between eight connected locations. Remote meetings remain
-                  available in the workbench. Fast travel unlocks as each
-                  location is introduced.
+                  Explore a connected corporate district, enter any of the eight
+                  buildings and use its elevators to visit the upper floors.
+                  Remote work remains available here. Every visible person can
+                  be approached.
                 </p>
                 <div className="map-illustration">
                   <div className="map-cross horizontal" />
@@ -633,6 +652,28 @@ export default function Workbench(props: Props) {
                     </button>
                   ))}
                 </div>
+                <details className="card">
+                  <summary>
+                    Building directories · choose an explorable floor
+                  </summary>
+                  <div className="floor-directory">
+                    {locations.map((building) => (
+                      <article key={building.id}>
+                        <h3>{building.name}</h3>
+                        {getBuildingFloors(building.id).map((level) => (
+                          <button
+                            key={level.index}
+                            onClick={() =>
+                              props.changeFloor(building.id, level.index)
+                            }
+                          >
+                            Floor {level.index + 1} · {level.name} →
+                          </button>
+                        ))}
+                      </article>
+                    ))}
+                  </div>
+                </details>
                 <div className="location-list">
                   {locations.map((l) => (
                     <article key={l.id}>
@@ -930,11 +971,21 @@ export default function Workbench(props: Props) {
               <>
                 <div className="panel-intro">
                   <p>
-                    Each contact has a limited fact set, available hours,
-                    decision authority, and fictional relationship memory.
-                    Research the business, then ask a focused question.
+                    Meet your colleagues and customers. Ask about their work,
+                    negotiate scope, repair trust, coordinate a handoff or
+                    invite someone to Common Ground café. Every conversation
+                    branches around your choices and remembers its outcome.
                   </p>
                 </div>
+                <button
+                  className="primary"
+                  onClick={() => {
+                    props.selectContact("");
+                    open("conversation");
+                  }}
+                >
+                  Browse all {content.contacts.length} people →
+                </button>
                 {accountPicker}
                 <div className="people-grid">
                   {content.contacts
@@ -944,7 +995,11 @@ export default function Workbench(props: Props) {
                         n.accountId === "internal",
                     )
                     .map((n) => (
-                      <article className="card person" key={n.id}>
+                      <article
+                        className="card person"
+                        data-contact-id={n.id}
+                        key={n.id}
+                      >
                         <span
                           className="portrait large"
                           style={{ background: n.color }}
@@ -980,6 +1035,12 @@ export default function Workbench(props: Props) {
                               : "Introductions still to make."}
                           </dd>
                         </dl>
+                        <button
+                          className="primary"
+                          onClick={() => props.selectContact(n.id)}
+                        >
+                          Talk to {n.name}
+                        </button>
                         <button
                           className="secondary"
                           onClick={() => {
@@ -2247,6 +2308,9 @@ function MissionView({
   const npc = content.contacts.find((n) => n.id === step.npcId);
   const trace = progress?.attempts.at(-1)?.trace.at(-1);
   const prior = progress?.stepIndex || 0;
+  const attempt = progress?.attempts.at(-1);
+  const branched = attempt?.branchVersion === 1;
+  const allSteps = [...mission.steps, ...(mission.branching?.nodes || [])];
   useEffect(() => {
     setChoice("");
     setValue("");
@@ -2270,17 +2334,36 @@ function MissionView({
             ))}
           </ul>
         </div>
-        <h3>Action path</h3>
+        <h3>{branched ? "Your decision path" : "Action path"}</h3>
         <ol className="step-path">
-          {mission.steps.map((s, i) => (
-            <li
-              className={i === prior ? "current" : i < prior ? "done" : ""}
-              key={s.id}
-            >
-              <span>{i < prior ? "✓" : i + 1}</span>
-              {s.title}
-            </li>
-          ))}
+          {branched ? (
+            <>
+              {attempt.trace.map((entry, index) => (
+                <li className="done" key={`${index}-${entry.stepId}`}>
+                  <span>✓</span>
+                  {allSteps.find((candidate) => candidate.id === entry.stepId)
+                    ?.title || entry.stepId}
+                </li>
+              ))}
+              <li className="current">
+                <span>{attempt.trace.length + 1}</span>
+                {step.title}
+              </li>
+              <li>
+                <span>↗</span>Your next decision shapes the route
+              </li>
+            </>
+          ) : (
+            mission.steps.map((s, i) => (
+              <li
+                className={i === prior ? "current" : i < prior ? "done" : ""}
+                key={s.id}
+              >
+                <span>{i < prior ? "✓" : i + 1}</span>
+                {s.title}
+              </li>
+            ))
+          )}
         </ol>
         <p className="muted">
           Training deadline: {mission.dueMinutes} business minutes. Public rules
@@ -2296,6 +2379,16 @@ function MissionView({
         </p>
       </aside>
       <div className="case-main">
+        {branched && (
+          <div className="branch-route">
+            <span className="eyebrow">A CASE WITH CONSEQUENCES</span>
+            <p>
+              Your choices can open a customer challenge, a containment route or
+              a recovery conversation. The debrief records the route you
+              actually took.
+            </p>
+          </div>
+        )}
         {trace && (
           <div className="feedback">
             <span>PREVIOUS ACTION DEBRIEF</span>
@@ -2304,8 +2397,10 @@ function MissionView({
         )}
         <div className="step-heading">
           <span className="eyebrow">
-            ACTION {prior + 1} / {mission.steps.length} · {step.duration}{" "}
-            BUSINESS MINUTES
+            {branched
+              ? `DECISION ${(attempt?.trace.length || 0) + 1} · BRANCHING CASE`
+              : `ACTION ${prior + 1} / ${mission.steps.length}`}{" "}
+            · {step.duration} BUSINESS MINUTES
           </span>
           <h2>{step.title}</h2>
           <p>{step.instruction}</p>
@@ -2623,6 +2718,34 @@ function Debrief({ state, mission }: { state: GameState; mission: Mission }) {
                 ? "In progress"
                 : "Retry / remediation"}
           </summary>
+          {a.debrief && (
+            <div className={`branch-outcome outcome-${a.debrief.outcome}`}>
+              <span className="eyebrow">
+                {a.debrief.outcome} ending · {a.debrief.completedStages}/
+                {a.debrief.totalStages} stages reached
+              </span>
+              <h3>{a.debrief.title}</h3>
+              <p>{a.debrief.summary}</p>
+              <div className="outcome-metrics">
+                <span>
+                  Account trust {a.debrief.relationship.trust}/100 (
+                  {a.debrief.relationship.trustChange > 0 ? "+" : ""}
+                  {a.debrief.relationship.trustChange})
+                </span>
+                <span>
+                  Risk {a.debrief.relationship.risk}/100 (
+                  {a.debrief.relationship.riskChange > 0 ? "+" : ""}
+                  {a.debrief.relationship.riskChange})
+                </span>
+              </div>
+              <h4>What happens next</h4>
+              <ul>
+                {a.debrief.nextSteps.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          )}
           <div className="score-bars">
             {Object.entries(a.dimensions).map(([key, score]) => (
               <div key={key}>
@@ -2649,10 +2772,12 @@ function Debrief({ state, mission }: { state: GameState; mission: Mission }) {
               history retained; remediation required.
             </p>
           )}
-          {a.trace.map((t) => (
-            <div className="record" key={t.stepId}>
+          {a.trace.map((t, traceIndex) => (
+            <div className="record" key={`${a.id}-${traceIndex}-${t.stepId}`}>
               <strong>
-                {mission.steps.find((s) => s.id === t.stepId)?.title}
+                {[...mission.steps, ...(mission.branching?.nodes || [])].find(
+                  (s) => s.id === t.stepId,
+                )?.title || t.stepId}
               </strong>
               <p>{t.feedback}</p>
               <small>

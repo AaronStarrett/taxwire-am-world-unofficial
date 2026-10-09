@@ -1,5 +1,6 @@
 import Ajv from "ajv";
 import schema from "./content.schema.json";
+import { validateMissionBranching } from "./branching";
 import type { ContentPack } from "./types";
 
 const checkSchema = new Ajv({ allErrors: true, strict: false }).compile(schema);
@@ -59,7 +60,9 @@ export function validateContent(pack: ContentPack): string[] {
   );
   duplicate(
     "global step",
-    pack.missions.flatMap((m) => m.steps.map((s) => s.id)),
+    pack.missions.flatMap((m) =>
+      [...m.steps, ...(m.branching?.nodes ?? [])].map((s) => s.id),
+    ),
   );
   const refs = (label: string, ids: string[], known: Set<string>) => {
     for (const id of ids)
@@ -147,6 +150,23 @@ export function validateContent(pack: ContentPack): string[] {
     refs(`Mission ${m.id} account`, [m.accountId], accounts);
     refs(`Mission ${m.id} competencies`, m.competencyIds, competencies);
     refs(`Mission ${m.id} prerequisites`, m.prerequisiteIds, missions);
+    errors.push(...validateMissionBranching(m));
+    for (const node of m.branching?.nodes ?? []) {
+      if (!locations.has(node.location))
+        errors.push(`Step ${node.id}: unknown location ${node.location}`);
+      refs(`Branch ${node.id} documents`, node.documentIds, documents);
+      refs(`Branch ${node.id} sources`, node.sourceIds, sources);
+      refs(
+        `Branch ${node.id} evidence`,
+        node.requiresEvidence ?? [],
+        new Set(m.steps.map((step) => step.id)),
+      );
+      if (node.npcId) refs(`Branch ${node.id} NPC`, [node.npcId], contacts);
+      duplicate(
+        `choice in ${node.id}`,
+        node.choices.map((choice) => choice.id),
+      );
+    }
     const previousSteps = new Set<string>();
     for (const s of m.steps) {
       if (!locations.has(s.location))

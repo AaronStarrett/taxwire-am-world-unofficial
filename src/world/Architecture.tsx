@@ -15,6 +15,7 @@ import {
   MeshStandardMaterial,
   SRGBColorSpace,
   Vector3,
+  BoxGeometry,
 } from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import {
@@ -36,18 +37,24 @@ import {
   Solid,
 } from "./Furnishings";
 import { SurfaceProvider, useSurface } from "./Surfaces";
+import { contacts } from "../content/accounts";
 import {
   getLocationAt,
   locations,
   type WorldLocation,
   type WorldObject,
+  getBuildingFloors,
+  getFloorObjects,
+  getFloorElevation,
+  WORLD_FLOOR_HEIGHT,
+  type BuildingFloor,
 } from "./locations";
 
 type Point = { x: number; z: number };
 export type WorldNavigationRef = React.RefObject<Point>;
 
 /** One material draw per static furniture surface. Transparent glass and animated adults stay separate. */
-function Batched({ children }: { children: ReactNode }) {
+export function Batched({ children }: { children: ReactNode }) {
   const root = useRef<Group>(null);
   useLayoutEffect(() => {
     const group = root.current;
@@ -254,18 +261,20 @@ function Colleague({
   rotation,
   appearance,
   variant,
+  reducedMotion = false,
 }: {
   position: WorldNavigationRef;
   rotation: number;
   appearance: AvatarAppearance;
   variant: number;
+  reducedMotion?: boolean;
 }) {
   const person = useRef<Group>(null),
     worldPoint = useMemo(() => new Vector3(), []),
     motion = useRef<CharacterMotion>({ speed: 0, interaction: 0 });
   const time = useRef(variant);
   useFrame((_, delta) => {
-    if (!person.current) return;
+    if (!person.current || reducedMotion) return;
     person.current.getWorldPosition(worldPoint);
     const dx = position.current.x - worldPoint.x,
       dz = position.current.z - worldPoint.z,
@@ -287,7 +296,12 @@ function Colleague({
       rotation={[0, Math.PI, 0]}
       userData={{ dynamicCharacter: true }}
     >
-      <AvatarModel appearance={appearance} variant={variant} motion={motion} />
+      <AvatarModel
+        appearance={appearance}
+        variant={variant}
+        motion={motion}
+        reducedMotion={reducedMotion}
+      />
     </group>
   );
 }
@@ -298,22 +312,24 @@ function WorldFurniture({
   index,
   position,
   rotation,
+  reducedMotion = false,
 }: {
   object: WorldObject;
   color: string;
   index: number;
   position: WorldNavigationRef;
   rotation: number;
+  reducedMotion?: boolean;
 }) {
   const contactId = object.contactId;
-  const characterVariant =
-    contactId === "npc-mentor"
-      ? 2
-      : contactId?.includes("cedarline")
-        ? 1
-        : contactId?.includes("harborworks")
-          ? 1
-          : index;
+  const identity = contactId
+    ? [...contactId].reduce(
+        (seed, letter) => (seed * 31 + letter.charCodeAt(0)) >>> 0,
+        7,
+      )
+    : index;
+  const contact = contacts.find((person) => person.id === contactId);
+  const characterVariant = contactId === "npc-mentor" ? 2 : identity % 8;
   return (
     <group position={[object.x, 0, object.z]}>
       {object.kind === "desk" && (
@@ -334,13 +350,19 @@ function WorldFurniture({
           position={position}
           rotation={rotation}
           variant={characterVariant}
+          reducedMotion={reducedMotion}
           appearance={{
-            shirt: contactId === "npc-mentor" ? "#546b76" : color,
-            skin: ["#b7815e", "#d2a783", "#8f6349"][index % 3],
+            shirt:
+              contactId === "npc-mentor"
+                ? "#546b76"
+                : (contact?.color ?? color),
+            skin: ["#b7815e", "#d2a783", "#8f6349", "#694736", "#dabb9c"][
+              identity % 5
+            ],
             hair:
               contactId === "npc-mentor"
                 ? "#6e726b"
-                : ["#49362b", "#352e2a", "#805d3b"][index % 3],
+                : ["#49362b", "#352e2a", "#805d3b"][identity % 3],
           }}
         />
       )}
@@ -387,19 +409,25 @@ function GlassPartition() {
 function RoomDetails({
   location,
   position,
+  reducedMotion = false,
+  meetingContactId,
 }: {
   location: WorldLocation;
   position: WorldNavigationRef;
+  reducedMotion?: boolean;
+  meetingContactId?: string;
 }) {
-  const localObjects = location.objects.map((object) => {
-    const dx = object.x - location.centerX,
-      dz = object.z - location.centerZ;
-    return {
-      ...object,
-      x: dx * Math.cos(location.rotation) - dz * Math.sin(location.rotation),
-      z: dx * Math.sin(location.rotation) + dz * Math.cos(location.rotation),
-    };
-  });
+  const localObjects = getFloorObjects(location.id, 0, meetingContactId).map(
+    (object) => {
+      const dx = object.x - location.centerX,
+        dz = object.z - location.centerZ;
+      return {
+        ...object,
+        x: dx * Math.cos(location.rotation) - dz * Math.sin(location.rotation),
+        z: dx * Math.sin(location.rotation) + dz * Math.cos(location.rotation),
+      };
+    },
+  );
   const labels: Record<string, string> = {
     home: "A clear start to your day",
     hq: "Understand. Coordinate. Follow through.",
@@ -483,6 +511,7 @@ function RoomDetails({
             index={index}
             position={position}
             rotation={location.rotation}
+            reducedMotion={reducedMotion}
           />
         ))}
         {["home", "research", "academy", "cedarline"].includes(location.id) && (
@@ -784,48 +813,441 @@ function RoomDetails({
   );
 }
 
+/** Simple architectural solids batch efficiently; fine furniture retains its authored rounded forms. */
+function Block({
+  at,
+  size,
+  color = "#8d9b9e",
+  surface = "metal",
+}: {
+  at: [number, number, number];
+  size: [number, number, number];
+  color?: string;
+  surface?: "metal" | "stone" | "wood" | "wall" | "screen";
+}) {
+  const material = useSurface(surface, color);
+  const geometry = useMemo(
+    () => new BoxGeometry(...size),
+    [size[0], size[1], size[2]],
+  );
+  useEffect(() => () => geometry.dispose(), [geometry]);
+  return (
+    <mesh
+      position={at}
+      geometry={geometry}
+      material={material}
+      castShadow
+      receiveShadow
+    />
+  );
+}
+
+function TowerShell({ location }: { location: WorldLocation }) {
+  const floors = getBuildingFloors(location.id).length;
+  const height = floors * WORLD_FLOOR_HEIGHT;
+  const texture = useMemo(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 384;
+    canvas.height = Math.min(2048, 128 * floors);
+    const c = canvas.getContext("2d")!;
+    c.scale(1, canvas.height / (128 * floors));
+    c.fillStyle = "#354c5c";
+    c.fillRect(0, 0, canvas.width, canvas.height);
+    for (let row = 0; row < floors; row++)
+      for (let col = 0; col < 6; col++) {
+        const x = col * 64,
+          y = row * 128;
+        const shade = (row * 11 + col * 7 + location.id.length) % 9;
+        const gradient = c.createLinearGradient(x, y, x + 64, y + 117);
+        gradient.addColorStop(
+          0,
+          ["#8496a0", "#6c8392", "#8998a2", "#637989"][shade % 4],
+        );
+        gradient.addColorStop(1, ["#415d70", "#4b6475", "#a39e88"][shade % 3]);
+        c.fillStyle = gradient;
+        c.fillRect(x + 3, y + 4, 58, 110);
+        if (shade < 4) {
+          c.fillStyle = "#c8c5b18c";
+          c.fillRect(x + 4, y + 5, 56, 28 + shade * 13);
+          c.strokeStyle = "#54626b66";
+          c.lineWidth = 1;
+          for (let slat = 8; slat < 28 + shade * 13; slat += 5) {
+            c.beginPath();
+            c.moveTo(x + 4, y + slat);
+            c.lineTo(x + 60, y + slat);
+            c.stroke();
+          }
+        }
+        c.fillStyle = "#203643";
+        c.fillRect(x, y + 114, 64, 14);
+        c.fillStyle = "#bec4c188";
+        c.fillRect(x + 2, y + 3, 1, 112);
+      }
+    const map = new CanvasTexture(canvas);
+    map.colorSpace = SRGBColorSpace;
+    map.anisotropy = 4;
+    return map;
+  }, [floors, location.id]);
+  useEffect(() => () => texture.dispose(), [texture]);
+  const tint =
+    location.id === "hq"
+      ? "#b4cec9"
+      : location.id === "cedarline" || location.id === "home"
+        ? "#d4c8b5"
+        : "#bbcad3";
+  return (
+    <>
+      {[0, 1, 2, 3].map((side) => (
+        <mesh
+          key={side}
+          position={
+            side === 0
+              ? [0, (height + 3.8) / 2, 5.015]
+              : side === 1
+                ? [6.015, (height + 3.8) / 2, 0]
+                : side === 2
+                  ? [0, (height + 3.8) / 2, -5.015]
+                  : [-6.015, (height + 3.8) / 2, 0]
+          }
+          rotation={[0, (side * Math.PI) / 2, 0]}
+          castShadow
+          receiveShadow
+        >
+          <planeGeometry args={[side % 2 ? 10 : 12, height - 3.8]} />
+          <meshStandardMaterial
+            map={texture}
+            color={tint}
+            metalness={0.48}
+            roughness={0.29}
+          />
+        </mesh>
+      ))}
+      <Batched>
+        {[-1, 1].flatMap((x) =>
+          [-1, 1].map((z) => (
+            <Block
+              key={`${x}:${z}`}
+              at={[x * 6.04, height / 2, z * 5.04]}
+              size={[0.24, height, 0.24]}
+              color="#b4b9b5"
+              surface="stone"
+            />
+          )),
+        )}
+        {Array.from({ length: floors + 1 }, (_, level) => (
+          <group key={level}>
+            <Block
+              at={[0, level * WORLD_FLOOR_HEIGHT, 5.075]}
+              size={[12.4, 0.13, 0.22]}
+              color="#859394"
+            />
+            <Block
+              at={[0, level * WORLD_FLOOR_HEIGHT, -5.075]}
+              size={[12.4, 0.13, 0.22]}
+              color="#859394"
+            />
+            <Block
+              at={[-6.075, level * WORLD_FLOOR_HEIGHT, 0]}
+              size={[0.22, 0.13, 10.4]}
+              color="#859394"
+            />
+            <Block
+              at={[6.075, level * WORLD_FLOOR_HEIGHT, 0]}
+              size={[0.22, 0.13, 10.4]}
+              color="#859394"
+            />
+          </group>
+        ))}
+        {[-3, 3].map((x) => (
+          <Block
+            key={x}
+            at={[x, height / 2, 5.18]}
+            size={[0.12, height, 0.36]}
+            color={location.id === "hq" ? "#c2b395" : "#a9b0ad"}
+          />
+        ))}
+        <Block
+          at={[0, height + 0.1, 0]}
+          size={[12.5, 0.3, 10.5]}
+          color="#b3bbb7"
+          surface="stone"
+        />
+        <Block
+          at={[0, height + 1.3, -0.5]}
+          size={[7.8, 2.4, 5.5]}
+          color="#53686b"
+        />
+        {[-2.8, 0, 2.8].map((x) => (
+          <Block
+            key={x}
+            at={[x, height + 2.6, -0.5]}
+            size={[1.9, 0.18, 4.8]}
+            color="#9da9a6"
+          />
+        ))}
+        <Block at={[0, 3.5, 5.95]} size={[8.8, 0.17, 2.2]} color="#566f70" />
+        <Block
+          at={[0, 3.41, 5.95]}
+          size={[8.3, 0.04, 1.8]}
+          color="#e3dbc8"
+          surface="wall"
+        />
+      </Batched>
+      <Sign
+        title={location.id === "hq" ? "TAXWIRE" : location.name}
+        subtitle={`${floors} EXPLORABLE FLOORS · FICTIONAL TRAINING DISTRICT`}
+        width={8.2}
+        at={[0, 4.48, 5.25]}
+        color="#263d43"
+      />
+      {location.id === "hq" && (
+        <Sign
+          title="TAXWIRE"
+          subtitle="ACCOUNT MANAGEMENT"
+          width={8.5}
+          at={[0, height - 2, 5.25]}
+          color="#214b43"
+        />
+      )}
+    </>
+  );
+}
+
+function LiftCab({ floor }: { floor: number }) {
+  return (
+    <group position={[0, 0, 4.83]}>
+      <Batched>
+        <Block at={[0, 1.45, 0]} size={[2.1, 2.9, 0.12]} color="#607178" />
+        {[-0.5, 0.5].map((x) => (
+          <Block
+            key={x}
+            at={[x, 1.38, -0.08]}
+            size={[0.95, 2.62, 0.08]}
+            color="#c3c9c5"
+          />
+        ))}
+        <Block
+          at={[0, 1.38, -0.13]}
+          size={[0.025, 2.64, 0.02]}
+          color="#35454e"
+        />
+        <Block
+          at={[1.27, 1.3, -0.09]}
+          size={[0.16, 0.32, 0.05]}
+          color="#526775"
+        />
+        <Block
+          at={[1.27, 1.31, -0.125]}
+          size={[0.05, 0.055, 0.025]}
+          color="#d7c48c"
+          surface="screen"
+        />
+      </Batched>
+      <Sign
+        title={
+          floor
+            ? `LEVEL ${String(floor + 1).padStart(2, "0")}`
+            : "STREET / LIFTS"
+        }
+        subtitle="USE LIFT DIRECTORY"
+        width={1.8}
+        at={[0, 2.95, -0.13]}
+        color="#263c45"
+      />
+    </group>
+  );
+}
+
+function UpperInterior({
+  location,
+  floor,
+  position,
+  reducedMotion,
+  meetingContactId,
+}: {
+  location: WorldLocation;
+  floor: BuildingFloor;
+  position: WorldNavigationRef;
+  reducedMotion: boolean;
+  meetingContactId?: string;
+}) {
+  const objects = getFloorObjects(
+    location.id,
+    floor.index,
+    meetingContactId,
+  ).map((object) => {
+    const dx = object.x - location.centerX,
+      dz = object.z - location.centerZ;
+    return {
+      ...object,
+      x: dx * Math.cos(location.rotation) - dz * Math.sin(location.rotation),
+      z: dx * Math.sin(location.rotation) + dz * Math.cos(location.rotation),
+    };
+  });
+  const warm = ["lounge", "residence", "library"].includes(floor.theme);
+  return (
+    <>
+      <Batched>
+        <Block
+          at={[0, -0.06, 0]}
+          size={[12.3, 0.2, 10.3]}
+          color="#b8beb8"
+          surface="stone"
+        />
+        <Solid
+          at={[0, 0.047, 0]}
+          size={[11.8, 0.025, 9.8]}
+          surface={warm ? "wood" : "fabric"}
+          color={warm ? "#b3a28b" : "#8c9697"}
+          radius={0.002}
+        />
+        <Solid
+          at={[0, 0.064, 0]}
+          size={[2.3, 0.012, 9.5]}
+          surface="stone"
+          color="#c8ccc7"
+          radius={0.002}
+        />
+        {[-3.4, 3.4].map((x) => (
+          <Solid
+            key={x}
+            at={[x, 0.065, -0.7]}
+            size={[4.1, 0.014, 5.4]}
+            surface="fabric"
+            color={warm ? "#a59f90" : "#727f83"}
+            radius={0.002}
+          />
+        ))}
+        <WindowWall side="left" height={3.55} />
+        <WindowWall side="right" height={3.55} />
+        <WindowWall side="rear" height={3.55} />
+        <Block
+          at={[0, 1.7, 4.99]}
+          size={[12, 3.4, 0.14]}
+          color="#d0d4ce"
+          surface="wall"
+        />
+        <Shelf
+          x={-3.8}
+          z={-4.4}
+          retail={floor.theme === "studio" && location.id === "cedarline"}
+        />
+        <Shelf x={3.8} z={-4.4} />
+        <Solid
+          at={[0, 1.8, -4.8]}
+          size={[4.7, 3.5, 0.07]}
+          color={warm ? "#777b6e" : "#4b6266"}
+        />
+        <Sign
+          title={floor.name}
+          subtitle={`LEVEL ${String(floor.index + 1).padStart(2, "0")} · ${location.name}`}
+          width={4.35}
+          at={[0, 2.55, -4.74]}
+          color={warm ? "#514f43" : "#2a4149"}
+        />
+        {[-3.4, 3.4].map((x) => (
+          <group key={x}>
+            <Block
+              at={[x, 3.35, -0.5]}
+              size={[2.8, 0.1, 0.18]}
+              color="#445458"
+            />
+            <Block
+              at={[x, 3.29, -0.5]}
+              size={[2.6, 0.025, 0.13]}
+              color="#f3e7c9"
+              surface="wall"
+            />
+          </group>
+        ))}
+        <Plant x={-5.35} z={3.8} scale={0.9} />
+        <Plant x={5.35} z={3.8} scale={0.9} />
+        {floor.theme === "studio" && (
+          <Solid
+            at={[5.81, 1.8, 0]}
+            size={[0.045, 1.4, 2.8]}
+            color="#e3e5da"
+            surface="paper"
+          />
+        )}
+        {floor.theme === "training" && (
+          <Sign
+            title="PRACTICE · REVIEW · REFINE"
+            subtitle="FICTIONAL CASES / PROFESSIONAL JUDGMENT"
+            width={3.4}
+            at={[0, 1.42, -4.7]}
+          />
+        )}
+        {floor.theme === "conference" && (
+          <Sign
+            title="UNDERSTAND THE DECISION"
+            subtitle="Facts · Options · Owner · Next step"
+            width={3.4}
+            at={[0, 1.42, -4.7]}
+          />
+        )}
+        {objects
+          .filter((object) => object.kind !== "elevator")
+          .map((object, index) => (
+            <WorldFurniture
+              key={`${object.id}:${index}`}
+              object={object}
+              index={index + floor.index}
+              color={location.color}
+              position={position}
+              rotation={location.rotation}
+              reducedMotion={reducedMotion}
+            />
+          ))}
+      </Batched>
+      <LiftCab floor={floor.index} />
+    </>
+  );
+}
+
 function Building({
   location,
   position,
   showcase,
+  activeFloor,
+  activeLocation,
+  quality,
+  reducedMotion,
+  onGroundClick,
+  meetingContactId,
 }: {
   location: WorldLocation;
   position: WorldNavigationRef;
   showcase: boolean;
+  activeFloor: number;
+  activeLocation: string;
+  quality: "low" | "medium" | "high";
+  reducedMotion: boolean;
+  onGroundClick: (x: number, z: number) => void;
+  meetingContactId?: string;
 }) {
-  const roof = useRef<Group>(null),
-    front = useRef<Group>(null),
-    rear = useRef<Group>(null),
-    left = useRef<Group>(null),
-    right = useRef<Group>(null);
-  const [detail, setDetail] = useState(false);
-  const detailRef = useRef(false);
-  const time = useRef(0);
-  const height = location.id === "hq" ? 4.25 : 3.55;
-  useFrame(({ camera }, delta) => {
+  const shell = useRef<Group>(null),
+    ground = useRef<Group>(null);
+  const [detail, setDetail] = useState(false),
+    detailRef = useRef(false),
+    time = useRef(0);
+  const upper = activeLocation === location.id && activeFloor > 0;
+  useFrame((_, delta) => {
     const point = position.current;
-    const inside = getLocationAt(point.x, point.z)?.id === location.id;
-    const dx = camera.position.x - location.centerX,
-      dz = camera.position.z - location.centerZ;
-    const cx =
-        dx * Math.cos(location.rotation) - dz * Math.sin(location.rotation),
-      cz = dx * Math.sin(location.rotation) + dz * Math.cos(location.rotation);
-    const cameraInside =
-      Math.abs(cx) < 6.2 &&
-      Math.abs(cz) < 5.2 &&
-      camera.position.y < height + 0.3;
-    if (roof.current) roof.current.visible = !(inside || cameraInside);
-    if (front.current) front.current.visible = !(inside && cz > 4.9);
-    if (rear.current) rear.current.visible = !(inside && cz < -4.9);
-    if (left.current) left.current.visible = !(inside && cx < -5.9);
-    if (right.current) right.current.visible = !(inside && cx > 5.9);
+    const inside =
+      !showcase &&
+      (upper ||
+        (!activeFloor && getLocationAt(point.x, point.z)?.id === location.id));
+    if (shell.current) shell.current.visible = !inside;
+    if (ground.current) ground.current.visible = !upper;
     time.current += delta;
-    if (time.current > 0.25) {
+    if (time.current > 0.2) {
       time.current = 0;
       const near =
         !showcase &&
+        !activeFloor &&
         Math.hypot(point.x - location.centerX, point.z - location.centerZ) <
-          13.2;
+          (quality === "low" ? 10 : 14);
       if (near !== detailRef.current) {
         detailRef.current = near;
         setDetail(near);
@@ -837,158 +1259,110 @@ function Building({
       position={[location.centerX, 0, location.centerZ]}
       rotation={[0, location.rotation, 0]}
     >
-      <Batched>
-        <Solid
-          at={[0, -0.06, 0]}
-          size={[12.35, 0.18, 10.35]}
-          surface="stone"
-          color="#bbc4bf"
-          radius={0.025}
-        />
-        <Solid
-          at={[0, 0.025, 0]}
-          size={[11.85, 0.045, 9.85]}
-          surface="stone"
-          color="#c5ceca"
-          radius={0.01}
-        />
-      </Batched>
-      <group ref={rear}>
-        <Batched>
-          <WindowWall side="rear" height={height} />
-        </Batched>
+      <group ref={shell}>
+        <TowerShell location={location} />
       </group>
-      <group ref={left}>
+      <group ref={ground}>
         <Batched>
-          <WindowWall side="left" height={height} />
-        </Batched>
-      </group>
-      <group ref={right}>
-        <Batched>
-          <WindowWall side="right" height={height} />
-        </Batched>
-      </group>
-      <group ref={front}>
-        <Batched>
+          <WindowWall side="rear" height={3.55} />
+          <WindowWall side="left" height={3.55} />
+          <WindowWall side="right" height={3.55} />
           {[-4.2, 4.2].map((x) => (
             <group key={x}>
               <Solid
-                at={[x, 0.35, 5]}
-                size={[3.6, 0.7, 0.3]}
+                at={[x, 0.4, 5]}
+                size={[3.6, 0.8, 0.25]}
                 surface="stone"
-                color="#bfc9c4"
+                color="#b3b9b4"
                 obstacle
-                radius={0.015}
               />
-              <Solid
-                at={[x, 2, 5]}
-                size={[3.5, 2.6, 0.035]}
-                surface="glass"
-                color="#a7c1c6"
-                radius={0.002}
+              <Solid at={[x, 2, 5]} size={[3.55, 2.4, 0.025]} surface="glass" />
+              <Block
+                at={[x, 3.55, 5]}
+                size={[3.6, 0.24, 0.3]}
+                color="#55696d"
               />
-              {[-1.76, 1.76].map((offset) => (
-                <Solid
-                  key={offset}
-                  at={[x + offset, height / 2, 5]}
-                  size={[0.07, height, 0.19]}
-                  surface="metal"
-                  color="#6a7f83"
-                  radius={0.006}
-                />
-              ))}
             </group>
           ))}
+          <Block at={[0, 3.55, 5]} size={[5.2, 0.24, 0.32]} color="#55696d" />
           <Solid
-            at={[0, height - 0.1, 5]}
-            size={[12.4, 0.36, 0.5]}
-            surface="metal"
-            color="#4c6763"
-            radius={0.012}
-          />
-          {[-2.4, 2.4].map((x) => (
-            <Solid
-              key={x}
-              at={[x, 1.58, 5]}
-              size={[0.13, 3.16, 0.3]}
-              surface="metal"
-              color="#456a60"
-              radius={0.012}
-            />
-          ))}
-          <Solid
-            at={[0, 3.18, 5]}
-            size={[4.85, 0.19, 0.3]}
-            surface="metal"
-            color="#456a60"
-            radius={0.012}
-          />
-          <Sign
-            title={location.name}
-            subtitle={
-              location.id === "hq"
-                ? "FICTIONAL TRAINING WORKPLACE"
-                : "ACCOUNT MANAGER WORLD"
-            }
-            color="#174237"
-            width={6.8}
-            at={[0, height + 0.2, 5.27]}
+            at={[0, 0.052, 4.2]}
+            size={[3.6, 0.018, 1.5]}
+            surface="fabric"
+            color="#667772"
           />
         </Batched>
-      </group>
-      <group ref={roof}>
-        <Batched>
-          {[-4.9, 4.9].map((x) => (
-            <Solid
-              key={x}
-              at={[x, height + 0.23, 0]}
-              size={[2.65, 0.17, 10.45]}
-              surface="metal"
-              color="#718b88"
-              radius={0.022}
+        {detail && (
+          <group position={[3.7, 0, 0]}>
+            <LiftCab floor={0} />
+          </group>
+        )}
+        {detail && (
+          <group position={[1.6, 0, 4.3]}>
+            <Block
+              at={[0, 0.62, 0]}
+              size={[0.08, 1.24, 0.12]}
+              color="#526569"
             />
-          ))}
-          {[-4.1, 4.1].map((z) => (
-            <Solid
-              key={z}
-              at={[0, height + 0.23, z]}
-              size={[7.3, 0.17, 2.25]}
-              surface="metal"
-              color="#718b88"
-              radius={0.022}
+            <Sign
+              title="LIFT DIRECTORY"
+              subtitle="CHOOSE A FLOOR"
+              width={0.82}
+              at={[0, 1.32, 0]}
+              color="#324d51"
             />
-          ))}
-          <Solid
-            at={[0, height + 0.32, 0]}
-            size={[7.3, 0.035, 5.9]}
-            surface="glass"
-            color="#9ab6bb"
-            radius={0.005}
+          </group>
+        )}
+        {detail && (
+          <RoomDetails
+            key={meetingContactId ?? "normal"}
+            location={location}
+            position={position}
+            reducedMotion={reducedMotion}
+            meetingContactId={meetingContactId}
           />
-          {[-2, 0, 2].map((z) => (
-            <Solid
-              key={z}
-              at={[0, height + 0.35, z]}
-              size={[7.4, 0.045, 0.055]}
-              surface="metal"
-              color="#859b98"
-              radius={0.003}
-            />
-          ))}
-        </Batched>
-      </group>
-      <Batched>
-        <Solid
-          at={[0, 0.066, 4.13]}
-          size={[3.4, 0.014, 1.4]}
-          surface="fabric"
-          color="#627c6d"
-          radius={0.01}
+        )}
+        <Sign
+          title={location.name}
+          subtitle="OPEN ENTRANCE · LIFT DIRECTORY INSIDE"
+          width={6.8}
+          at={[0, 3.98, 5.21]}
+          color="#263f42"
         />
-        <Plant x={-5.2} z={5.7} scale={1.1} />
-        <Plant x={5.2} z={5.7} scale={1.1} />
-      </Batched>
-      {detail && <RoomDetails location={location} position={position} />}
+        <group position={[2.1, 0, 4.6]}>
+          <Sign
+            title="LIFTS ↑"
+            subtitle="ALL FLOORS"
+            width={0.75}
+            at={[0, 1.8, 0]}
+          />
+        </group>
+      </group>
+      {upper && (
+        <group
+          key={`${location.id}:${activeFloor}:${meetingContactId ?? "normal"}`}
+          position={[0, getFloorElevation(location.id, activeFloor), 0]}
+        >
+          <UpperInterior
+            location={location}
+            floor={getBuildingFloors(location.id)[activeFloor]}
+            position={position}
+            reducedMotion={reducedMotion}
+            meetingContactId={meetingContactId}
+          />
+          <mesh
+            position={[0, 0.081, 0]}
+            rotation={[-Math.PI / 2, 0, 0]}
+            onClick={(event) => {
+              event.stopPropagation();
+              onGroundClick(event.point.x, event.point.z);
+            }}
+          >
+            <planeGeometry args={[11.8, 9.8]} />
+            <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+          </mesh>
+        </group>
+      )}
     </group>
   );
 }
@@ -1055,7 +1429,7 @@ function Street({
           onGroundClick(event.point.x, event.point.z);
         }}
       >
-        <planeGeometry args={[76, 76]} />
+        <planeGeometry args={[128, 128]} />
       </mesh>
       <Batched>
         {[-12, 12].map((p) => (
@@ -1199,24 +1573,256 @@ function Street({
   );
 }
 
+function OuterDistrict({ quality }: { quality: "low" | "medium" | "high" }) {
+  return (
+    <>
+      <Batched>
+        {[-42, 42].map((p) => (
+          <group key={p}>
+            <Block
+              at={[p, -0.035, 0]}
+              size={[8, 0.035, 126]}
+              color="#4d565a"
+              surface="stone"
+            />
+            <Block
+              at={[0, -0.032, p]}
+              size={[126, 0.035, 8]}
+              color="#4d565a"
+              surface="stone"
+            />
+            {[-4.2, 4.2].map((edge) => (
+              <group key={edge}>
+                <Block
+                  at={[p + edge, 0.015, 0]}
+                  size={[0.22, 0.085, 126]}
+                  color="#c2c5bd"
+                  surface="stone"
+                />
+                <Block
+                  at={[0, 0.015, p + edge]}
+                  size={[126, 0.085, 0.22]}
+                  color="#c2c5bd"
+                  surface="stone"
+                />
+              </group>
+            ))}
+            {Array.from({ length: 18 }, (_, index) => -59.5 + index * 7).map(
+              (along) => (
+                <group key={along}>
+                  <Block
+                    at={[p, -0.007, along]}
+                    size={[0.095, 0.006, 2.8]}
+                    color="#d3cba8"
+                    surface="wall"
+                  />
+                  <Block
+                    at={[along, -0.006, p]}
+                    size={[2.8, 0.006, 0.095]}
+                    color="#d3cba8"
+                    surface="wall"
+                  />
+                </group>
+              ),
+            )}
+            {[-23, 0, 23].map((along) => (
+              <group key={along}>
+                {Array.from(
+                  { length: 8 },
+                  (_, index) => -3.4 + index * 0.95,
+                ).map((stripe) => (
+                  <group key={stripe}>
+                    <Block
+                      at={[p + stripe, -0.004, along]}
+                      size={[0.46, 0.015, 3.2]}
+                      color="#d9ddd3"
+                      surface="stone"
+                    />
+                    <Block
+                      at={[along, -0.003, p + stripe]}
+                      size={[3.2, 0.015, 0.46]}
+                      color="#d9ddd3"
+                      surface="stone"
+                    />
+                  </group>
+                ))}
+              </group>
+            ))}
+          </group>
+        ))}
+        {[-1, 1].map((side) => (
+          <group key={side}>
+            <Block
+              at={[side * 59, -0.015, 0]}
+              size={[7, 0.035, 126]}
+              color="#a6b3a8"
+              surface="stone"
+            />
+            <Block
+              at={[0, -0.014, side * 59]}
+              size={[126, 0.035, 7]}
+              color="#a6b3a8"
+              surface="stone"
+            />
+            <Block
+              at={[side * 63.8, 0.52, 0]}
+              size={[0.35, 1.04, 128]}
+              color="#818f85"
+              surface="stone"
+            />
+            <Block
+              at={[0, 0.52, side * 63.8]}
+              size={[128, 1.04, 0.35]}
+              color="#818f85"
+              surface="stone"
+            />
+            {[-52, -36, -18, 0, 18, 36, 52].map((along) => (
+              <group key={along}>
+                <Block
+                  at={[side * 53, 0.29, along]}
+                  size={[1.8, 0.58, 1.8]}
+                  color="#949e95"
+                  surface="stone"
+                />
+                <Block
+                  at={[along, 0.29, side * 53]}
+                  size={[1.8, 0.58, 1.8]}
+                  color="#949e95"
+                  surface="stone"
+                />
+                {quality !== "low" && (
+                  <>
+                    <Tree x={side * 53} z={along} scale={1.3} />
+                    <Tree x={along} z={side * 53} scale={1.3} />
+                  </>
+                )}
+                <Rod
+                  at={[side * 48, 2.5, along]}
+                  radius={0.055}
+                  length={5}
+                  color="#46565b"
+                />
+                <Block
+                  at={[side * 48, 5, along]}
+                  size={[0.75, 0.09, 0.75]}
+                  color="#586b6c"
+                />
+              </group>
+            ))}
+            {[-44, -22, 22, 44].map((along) => (
+              <group key={along}>
+                <Block
+                  at={[along, 0.43, side * 59]}
+                  size={[3.2, 0.12, 0.85]}
+                  color="#8e7960"
+                  surface="wood"
+                />
+                <Block
+                  at={[along, 0.9, side * 59.35]}
+                  size={[3.2, 0.58, 0.095]}
+                  color="#8e7960"
+                  surface="wood"
+                />
+                {[-1.2, 1.2].map((leg) => (
+                  <Block
+                    key={leg}
+                    at={[along + leg, 0.22, side * 59]}
+                    size={[0.12, 0.44, 0.6]}
+                    color="#536769"
+                  />
+                ))}
+              </group>
+            ))}
+          </group>
+        ))}
+        {/* Paving joints establish physical scale rather than an undifferentiated green ground. */}
+        {Array.from({ length: 23 }, (_, index) => -33 + index * 3).map((p) => (
+          <group key={p}>
+            <Block
+              at={[p, -0.046, 0]}
+              size={[0.018, 0.006, 72]}
+              color="#8f9d96"
+              surface="stone"
+            />
+            <Block
+              at={[0, -0.045, p]}
+              size={[72, 0.006, 0.018]}
+              color="#8f9d96"
+              surface="stone"
+            />
+          </group>
+        ))}
+      </Batched>
+      <Sign
+        title="CIVIC QUARTER"
+        subtitle="EVIDENCE SQUARE · RIVERSIDE PROMENADE"
+        width={8}
+        at={[0, 2.8, 61.5]}
+        color="#324d4d"
+      />
+      <Sign
+        title="EVIDENCE SQUARE"
+        subtitle="EIGHT BUILDINGS · WALK IN · EXPLORE EVERY FLOOR"
+        width={6.5}
+        at={[0, 2.7, -10.5]}
+        color="#294641"
+      />
+      <group position={[-60, 0, 0]} rotation={[0, Math.PI / 2, 0]}>
+        <Sign
+          title="RIVERSIDE WALK"
+          subtitle="A MOMENT TO REFLECT"
+          width={7}
+          at={[0, 2.7, 0]}
+          color="#3b5155"
+        />
+      </group>
+      <mesh position={[-72, -0.2, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[14, 170]} />
+        <meshStandardMaterial
+          color="#657f88"
+          roughness={0.22}
+          metalness={0.55}
+        />
+      </mesh>
+    </>
+  );
+}
+
 export function District({
   onGroundClick,
   position,
   showcase = false,
+  floor = 0,
+  locationId = "home",
+  quality = "medium",
+  reducedMotion = false,
+  meetingContactId,
 }: {
   onGroundClick: (x: number, z: number) => void;
   position: WorldNavigationRef;
   showcase?: boolean;
+  floor?: number;
+  locationId?: string;
+  quality?: "low" | "medium" | "high";
+  reducedMotion?: boolean;
+  meetingContactId?: string;
 }) {
   return (
     <SurfaceProvider>
       <Street onGroundClick={onGroundClick} />
+      <OuterDistrict key={quality} quality={quality} />
       {locations.map((location) => (
         <Building
           key={location.id}
           location={location}
           position={position}
           showcase={showcase}
+          activeFloor={floor}
+          activeLocation={locationId}
+          quality={quality}
+          reducedMotion={reducedMotion}
+          meetingContactId={meetingContactId}
+          onGroundClick={onGroundClick}
         />
       ))}
     </SurfaceProvider>

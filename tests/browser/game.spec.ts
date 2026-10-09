@@ -13,7 +13,11 @@ test.beforeAll(async () => {
     resolve(".local/browser-tests/profile-" + Date.now()),
     {
       headless: true,
-      ...(process.platform === "win32" ? { channel: "chrome" } : {}),
+      ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+        ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
+        : process.platform === "win32"
+          ? { channel: "chrome" }
+          : {}),
       viewport: { width: 1280, height: 720 },
       recordVideo:
         process.env.RECORD_GAMEPLAY === "1"

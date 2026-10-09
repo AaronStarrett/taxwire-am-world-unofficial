@@ -1,4 +1,10 @@
-import { locations, localToWorld } from "./locations";
+import {
+  locations,
+  localToWorld,
+  getFloorObjects,
+  getFloorArrival,
+  normalizeFloor,
+} from "./locations";
 
 export type Point = { x: number; z: number };
 export type Collider = {
@@ -8,7 +14,7 @@ export type Collider = {
   maxZ: number;
 };
 export const PLAYER_RADIUS = 0.3;
-export const WORLD_BOUNDARY = 39;
+export const WORLD_BOUNDARY = 64;
 
 function rectangle(
   x: number,
@@ -115,6 +121,7 @@ export const colliders: Collider[] = locations.flatMap((location) => {
 
 export type GuidanceTarget = {
   locationId: string;
+  floor?: number;
   objectId?: string;
   x?: number;
   z?: number;
@@ -125,8 +132,9 @@ export type GuidanceTarget = {
 export function safePosition(
   position: Point & { yaw?: number },
   locationId = "home",
+  floor = 0,
 ): { x: number; z: number; yaw: number } {
-  if (isWalkable(position))
+  if (isWalkable(position, getSceneColliders(locationId, floor)))
     return {
       x: position.x,
       z: position.z,
@@ -134,7 +142,7 @@ export function safePosition(
     };
   const location =
     locations.find((place) => place.id === locationId) ?? locations[0];
-  return { x: location.x, z: location.z, yaw: location.rotation };
+  return getFloorArrival(location.id, floor);
 }
 
 /** Work desks/NPC centers are solid. Guidance points at a reachable approach, never inside furniture. */
@@ -142,20 +150,27 @@ export function reachableTarget(
   target: GuidanceTarget,
   start: Point,
 ):
-  | (Point & { objectId?: string; locationId: string; label?: string })
+  | (Point & {
+      objectId?: string;
+      locationId: string;
+      floor?: number;
+      label?: string;
+    })
   | undefined {
   const location = locations.find((place) => place.id === target.locationId);
   if (!location) return undefined;
-  const object = location.objects.find(
+  const floor = normalizeFloor(location.id, target.floor);
+  const obstacles = getSceneColliders(location.id, floor);
+  const object = getFloorObjects(location.id, floor).find(
     (candidate) => candidate.id === target.objectId,
   );
   const explicit = Number.isFinite(target.x) && Number.isFinite(target.z);
   const center = explicit
     ? { x: target.x!, z: target.z! }
     : (object ?? location);
-  const safeStart = safePosition(start, location.id);
+  const safeStart = safePosition(start, location.id, floor);
   const candidates: Point[] = [];
-  if (isWalkable(center)) candidates.push(center);
+  if (isWalkable(center, obstacles)) candidates.push(center);
   if (object)
     for (const radius of [1.3, 1.8, 2.15])
       for (let i = 0; i < 16; i++)
@@ -170,14 +185,15 @@ export function reachableTarget(
   );
   const point = candidates.find(
     (candidate) =>
-      isWalkable(candidate) &&
+      isWalkable(candidate, obstacles) &&
       getPlace(candidate, location.id) &&
-      findPath(safeStart, candidate).length > 0,
+      findPath(safeStart, candidate, obstacles).length > 0,
   );
   return point
     ? {
         ...point,
         locationId: location.id,
+        floor,
         objectId: target.objectId,
         label: target.label ?? object?.label ?? location.name,
       }
@@ -200,6 +216,101 @@ for (const x of [-7.5, 7.5])
   for (const z of [-7.5, 7.5]) colliders.push(rectangle(x, z, 2, 2));
 colliders.push(rectangle(0, 0, 3.8, 3.8));
 colliders.push(rectangle(-6, 0, 0.62, 2.7), rectangle(6, 0, 0.62, 2.7));
+
+/** Actual outer-district furniture and landscaping, leaving broad continuous pedestrian routes. */
+export const cityObstacles: Collider[] = [];
+for (const side of [-1, 1]) {
+  for (const along of [-52, -36, -18, 0, 18, 36, 52]) {
+    cityObstacles.push(rectangle(side * 53, along, 1.8, 1.8));
+    cityObstacles.push(rectangle(along, side * 53, 1.8, 1.8));
+  }
+  for (const along of [-44, -22, 22, 44])
+    cityObstacles.push(rectangle(along, side * 59, 3.2, 0.85));
+}
+colliders.push(...cityObstacles);
+const floorColliderCache = new Map<string, Collider[]>();
+/** Upper floors are genuine bounded rooms, isolated from all ground-floor obstacles. */
+export function getSceneColliders(
+  locationId: string,
+  requestedFloor = 0,
+): readonly Collider[] {
+  const floor = normalizeFloor(locationId, requestedFloor);
+  if (!floor) return colliders;
+  const key = `${locationId}:${floor}`;
+  const cached = floorColliderCache.get(key);
+  if (cached) return cached;
+  const location =
+    locations.find((candidate) => candidate.id === locationId) ?? locations[0];
+  const sideways = Math.abs(Math.sin(location.rotation)) > 0.5;
+  const halfX = sideways ? 5 : 6,
+    halfZ = sideways ? 6 : 5;
+  const minX = location.centerX - halfX,
+    maxX = location.centerX + halfX;
+  const minZ = location.centerZ - halfZ,
+    maxZ = location.centerZ + halfZ;
+  const obstacles: Collider[] = [
+    {
+      minX: -WORLD_BOUNDARY,
+      maxX: minX + 0.12,
+      minZ: -WORLD_BOUNDARY,
+      maxZ: WORLD_BOUNDARY,
+    },
+    {
+      minX: maxX - 0.12,
+      maxX: WORLD_BOUNDARY,
+      minZ: -WORLD_BOUNDARY,
+      maxZ: WORLD_BOUNDARY,
+    },
+    { minX, maxX, minZ: -WORLD_BOUNDARY, maxZ: minZ + 0.12 },
+    { minX, maxX, minZ: maxZ - 0.12, maxZ: WORLD_BOUNDARY },
+  ];
+  function localBox(x: number, z: number, width: number, depth: number) {
+    const world = localToWorld(
+      x,
+      z,
+      location.centerX,
+      location.centerZ,
+      location.rotation,
+    );
+    return rectangle(
+      world.x,
+      world.z,
+      sideways ? depth : width,
+      sideways ? width : depth,
+    );
+  }
+  for (const object of getFloorObjects(locationId, floor)) {
+    if (object.kind === "elevator") continue;
+    const dx = object.x - location.centerX,
+      dz = object.z - location.centerZ;
+    const x =
+      dx * Math.cos(location.rotation) - dz * Math.sin(location.rotation);
+    const z =
+      dx * Math.sin(location.rotation) + dz * Math.cos(location.rotation);
+    const sizes =
+      object.kind === "desk"
+        ? [2.1, 1.05]
+        : object.kind === "meeting"
+          ? [2.6, 1.5]
+          : [0.85, 0.85];
+    obstacles.push(localBox(x, z, sizes[0], sizes[1]));
+    if (object.kind === "desk")
+      obstacles.push(localBox(x, z + 0.86, 0.6, 0.58));
+    if (object.kind === "meeting")
+      obstacles.push(
+        localBox(x - 0.8, z + 1.07, 0.6, 0.58),
+        localBox(x + 0.8, z + 1.07, 0.6, 0.58),
+        localBox(x, z - 1.07, 0.6, 0.58),
+      );
+  }
+  // All program types share side archives and rear storage; circulation is kept down the centre.
+  obstacles.push(
+    localBox(-3.8, -4.4, 2.35, 0.45),
+    localBox(3.8, -4.4, 2.35, 0.45),
+  );
+  floorColliderCache.set(key, obstacles);
+  return obstacles;
+}
 
 export function isWalkable(
   point: Point,

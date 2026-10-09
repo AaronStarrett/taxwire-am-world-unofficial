@@ -1,7 +1,7 @@
 name: Validate and publish game
 on:
   push:
-    branches: [main]
+    branches: [main, development, "feature/**"]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -16,7 +16,7 @@ jobs:
       contents: read
       pages: read
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
     env:
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.local/browsers
       npm_config_cache: ${{ github.workspace }}/.local/cache/npm
@@ -37,6 +37,17 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - name: Verify playable production build at repository subpath
         run: npm run test:browser
+      - name: Retain synthetic browser acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: browser-acceptance-evidence
+          path: |
+            .local/evidence/**/*.png
+            .local/evidence/browser-results.json
+            .local/evidence/failure-dom.txt
+          if-no-files-found: ignore
+          retention-days: 1
       - name: Configure Pages
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5

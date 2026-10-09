@@ -909,7 +909,9 @@ export function getStepGuidance(
   visibleDocumentIds?: string[],
 ): StepGuidance | undefined {
   const mission = pack.missions.find((m) => m.id === missionId),
-    s = mission?.steps.find((item) => item.id === stepId);
+    s = [...(mission?.steps ?? []), ...(mission?.branching?.nodes ?? [])].find(
+      (item) => item.id === stepId,
+    );
   if (!mission || !s) return undefined;
   const lesson = lessonFor(mission),
     concept = stepConcepts[s.kind],
@@ -942,9 +944,10 @@ export function getStepGuidance(
   if (mission.id === "X-A10" && s.kind === "calculation")
     demonstration =
       "Different toy cohort: opening value 100, loss 10 and same-cohort expansion 5 gives (100−10+5)/100×100=95%. Define the denominator and exclude new-logo revenue.";
-  const next = mission.steps[mission.steps.indexOf(s) + 1];
+  const index = mission.steps.indexOf(s);
+  const next = index >= 0 ? mission.steps[index + 1] : undefined;
   return {
-    objective: concept.objective,
+    objective: index < 0 ? s.title : concept.objective,
     locationId: s.location,
     panel: concept.panel,
     interact: contact
@@ -952,7 +955,7 @@ export function getStepGuidance(
       : concept.interact,
     why: lesson.why,
     doneWhen: concept.doneWhen,
-    teach: `${concept.teach} ${core}`,
+    teach: index < 0 ? s.instruction : `${concept.teach} ${core}`,
     terms: termsByKind[s.kind].map(([term, definition]) => ({
       term,
       definition,

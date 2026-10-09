@@ -31,6 +31,7 @@ import {
   moveWithCollision,
   reachableTarget,
   safePosition,
+  getSceneColliders,
   type Point,
   type GuidanceTarget,
 } from "./collision";
@@ -39,6 +40,11 @@ import {
   locations,
   worldObjects,
   type WorldObject,
+  getBuildingFloors,
+  getFloorObjects,
+  getFloorArrival,
+  getFloorElevation,
+  normalizeFloor,
 } from "./locations";
 import { PositionSynchronizer } from "./PositionSync";
 import "./world.css";
@@ -58,6 +64,11 @@ export type WorldProps = {
   location: string;
   position: WorldPosition;
   positionRevision?: number;
+  floor?: number;
+  onFloorChange?: (locationId: string, floor: number) => void;
+  onAreaEnter?: (locationId: string) => void;
+  conversationContactId?: string;
+  meetingContactId?: string;
   avatar: AvatarAppearance;
   showcase?: boolean;
   quality: "low" | "medium" | "high";
@@ -68,7 +79,7 @@ export type WorldProps = {
   cameraReframe?: number;
   conversationFraming?: boolean;
   onWorldEvent?: (event: WorldEvent) => void;
-  onInteract: (objectId: string) => void;
+  onInteract: (objectId: string, contactId?: string) => void;
   onTravel: (locationId: string) => void;
   onPosition: (position: WorldPosition) => void;
   onError: () => void;
@@ -119,10 +130,14 @@ function Scene({
   props,
   controls,
   onNearby,
+  onLiftOpen,
+  onAreaChange,
 }: {
   props: WorldProps;
   controls: React.RefObject<Controls>;
   onNearby: (object: WorldObject | undefined) => void;
+  onLiftOpen: (locationId: string) => void;
+  onAreaChange: (locationId?: string) => void;
 }) {
   const player = useRef<Group>(null),
     nearMarker = useRef<Group>(null),
@@ -133,6 +148,10 @@ function Scene({
   const positionSync = useRef(
     new PositionSynchronizer(props.positionRevision ?? 0),
   );
+  const pendingPhysicalEntry = useRef<
+    { locationId: string; revision: number } | undefined
+  >(undefined);
+  const previousArea = useRef<string | undefined>(undefined);
   const callbacks = useRef(props);
   callbacks.current = props;
   const emitPosition = useCallback((position: WorldPosition) => {
@@ -149,7 +168,16 @@ function Scene({
   const { camera, scene, gl, size } = useThree();
   useEffect(() => {
     if (!(camera instanceof PerspectiveCamera)) return;
-    if (props.conversationFraming)
+    if (props.showcase && size.width > 750)
+      camera.setViewOffset(
+        size.width,
+        size.height,
+        -0.16 * size.width,
+        0,
+        size.width,
+        size.height,
+      );
+    else if (props.conversationFraming)
       camera.setViewOffset(
         size.width,
         size.height,
@@ -164,7 +192,13 @@ function Scene({
       camera.clearViewOffset();
       camera.updateProjectionMatrix();
     };
-  }, [camera, props.conversationFraming, size.width, size.height]);
+  }, [
+    camera,
+    props.conversationFraming,
+    props.showcase,
+    size.width,
+    size.height,
+  ]);
   const ray = useMemo(() => new Raycaster(), []),
     cameraPoint = useMemo(() => new Vector3(), []),
     targetPoint = useMemo(() => new Vector3(), []),
@@ -188,7 +222,8 @@ function Scene({
   const cameraWalls = useRef<Mesh[]>([]);
   const target = useMemo(
     () =>
-      props.guidanceTarget
+      props.guidanceTarget &&
+      (props.guidanceTarget.floor ?? 0) === (props.floor ?? 0)
         ? reachableTarget(props.guidanceTarget, current.current)
         : undefined,
     [
@@ -197,6 +232,8 @@ function Scene({
       props.guidanceTarget?.x,
       props.guidanceTarget?.z,
       props.guidanceTarget?.label,
+      props.guidanceTarget?.floor,
+      props.floor,
     ],
   );
   const previousReframe = useRef(props.cameraReframe ?? 0);
@@ -207,7 +244,7 @@ function Scene({
         walls.push(object);
     });
     cameraWalls.current = walls;
-  }, [scene]);
+  }, [scene, props.floor, props.location]);
   useEffect(() => {
     const loss = (event: Event) => {
       event.preventDefault();
@@ -217,29 +254,44 @@ function Scene({
     return () => gl.domElement.removeEventListener("webglcontextlost", loss);
   }, [gl]);
   useEffect(() => {
+    const physicalEntry = pendingPhysicalEntry.current;
+    pendingPhysicalEntry.current = undefined;
+    if (
+      physicalEntry?.locationId === props.location &&
+      physicalEntry.revision === (props.positionRevision ?? 0) &&
+      !props.floor &&
+      positioned.current
+    ) {
+      // An ordinary doorway crossing changes domain location only. Keep the live pose,
+      // camera orbit, and the rest of a click-to-walk route intact.
+      return;
+    }
     const location =
       locations.find((place) => place.id === props.location) ?? locations[0];
-    const restored = safePosition(props.position, props.location);
+    const restored = safePosition(props.position, props.location, props.floor);
     current.current =
-      isWalkable(props.position) &&
+      isWalkable(
+        props.position,
+        getSceneColliders(props.location, props.floor),
+      ) &&
       (!positioned.current ||
         getLocationAt(props.position.x, props.position.z)?.id === location.id)
         ? restored
-        : { x: location.x, z: location.z, yaw: location.rotation };
+        : getFloorArrival(location.id, props.floor);
     positioned.current = true;
     positionSync.current.reset();
     controls.current.path = [];
     controls.current.keys.clear();
     controls.current.orbit = location.rotation + Math.PI;
-    if (callbacks.current.showcase) camera.position.set(44, 41, 50);
+    if (callbacks.current.showcase) camera.position.set(84, 36, 98);
     else
       camera.position.set(
         current.current.x - Math.sin(controls.current.orbit) * 4.25,
-        2.65,
+        2.65 + getFloorElevation(props.location, props.floor),
         current.current.z - Math.cos(controls.current.orbit) * 4.25,
       );
     emitPosition(current.current);
-  }, [props.location]);
+  }, [props.location, props.floor]);
   useEffect(() => {
     const update = positionSync.current.receive(
       props.position,
@@ -254,7 +306,7 @@ function Scene({
       ) > 0.001 ||
       Math.abs(props.position.yaw - lastEmitted.current.yaw) > 0.001;
     if (external) {
-      const next = safePosition(props.position, props.location);
+      const next = safePosition(props.position, props.location, props.floor);
       current.current = next;
       lastEmitted.current = { ...next };
       const area = getLocationAt(next.x, next.z);
@@ -269,6 +321,7 @@ function Scene({
     props.position.z,
     props.position.yaw,
     props.positionRevision,
+    props.floor,
   ]);
   useEffect(() => {
     if (props.paused) {
@@ -285,12 +338,26 @@ function Scene({
     props.guidanceTarget?.objectId,
     props.guidanceTarget?.x,
     props.guidanceTarget?.z,
+    props.guidanceTarget?.floor,
+    props.floor,
   ]);
   useEffect(() => {
     if (!props.navigateTo || props.paused || props.showcase) return;
+    const destinationFloor = props.navigateTo.floor ?? 0;
+    if (
+      destinationFloor !== (props.floor ?? 0) ||
+      (destinationFloor > 0 && props.navigateTo.locationId !== props.location)
+    ) {
+      props.onFloorChange?.(props.navigateTo.locationId, destinationFloor);
+      return;
+    }
     const point = reachableTarget(props.navigateTo, current.current);
     if (point) {
-      controls.current.path = findPath(current.current, point);
+      controls.current.path = findPath(
+        current.current,
+        point,
+        getSceneColliders(props.location, props.floor),
+      );
       controls.current.input = "pointer";
     }
   }, [
@@ -299,6 +366,8 @@ function Scene({
     props.navigateTo?.objectId,
     props.navigateTo?.x,
     props.navigateTo?.z,
+    props.navigateTo?.floor,
+    props.floor,
   ]);
   useEffect(() => {
     const request = props.cameraReframe ?? 0;
@@ -317,13 +386,16 @@ function Scene({
     const delta = Math.min(rawDelta, 0.06),
       input = controls.current,
       config = callbacks.current;
+    const floor = normalizeFloor(config.location, config.floor);
+    const elevation = getFloorElevation(config.location, floor);
+    const obstacles = getSceneColliders(config.location, floor);
     let next = { x: current.current.x, z: current.current.z };
     if (input.recoverRequested) {
       const area =
         getLocationAt(next.x, next.z) ??
         locations.find((place) => place.id === config.location) ??
         locations[0];
-      current.current = { x: area.x, z: area.z, yaw: area.rotation };
+      current.current = getFloorArrival(area.id, floor);
       input.orbit = area.rotation + Math.PI;
       input.path = [];
       input.recoverRequested = false;
@@ -370,7 +442,7 @@ function Scene({
         dz = ((goal.z - next.z) / length) * speed;
       }
     }
-    const resolved = moveWithCollision(next, dx, dz),
+    const resolved = moveWithCollision(next, dx, dz, obstacles),
       traveled = Math.hypot(resolved.x - next.x, resolved.z - next.z);
     const walking = traveled > 0.002;
     motion.current.speed = delta > 0 ? traveled / delta : 0;
@@ -401,7 +473,7 @@ function Scene({
     }
     if (target && targetMarker.current) {
       targetMarker.current.visible = !config.showcase;
-      targetMarker.current.position.set(target.x, 0.09, target.z);
+      targetMarker.current.position.set(target.x, elevation + 0.09, target.z);
       const arrived =
         Math.hypot(resolved.x - target.x, resolved.z - target.z) < 0.6;
       if (
@@ -422,7 +494,11 @@ function Scene({
       }
     } else if (targetMarker.current) targetMarker.current.visible = false;
     if (player.current) {
-      player.current.position.set(current.current.x, 0.055, current.current.z);
+      player.current.position.set(
+        current.current.x,
+        elevation + 0.055,
+        current.current.z,
+      );
       player.current.rotation.y = current.current.yaw;
     }
     sample.current.ui += delta;
@@ -432,9 +508,34 @@ function Scene({
       let closest: WorldObject | undefined;
       let distance = 2.4;
       const area = getLocationAt(current.current.x, current.current.z);
-      for (const object of worldObjects) {
-        if (object.kind !== "portal" && !area?.objects.includes(object))
-          continue;
+      onAreaChange(area?.id);
+      if (
+        !floor &&
+        !config.showcase &&
+        !config.paused &&
+        area?.id !== previousArea.current
+      ) {
+        previousArea.current = area?.id;
+        if (area && area.id !== config.location && config.onAreaEnter) {
+          pendingPhysicalEntry.current = {
+            locationId: area.id,
+            revision: config.positionRevision ?? 0,
+          };
+          emitPosition(current.current);
+          config.onAreaEnter(area.id);
+        }
+      }
+      const activeObjects = area
+        ? getFloorObjects(area.id, floor, config.meetingContactId)
+        : [];
+      const candidates =
+        floor > 0
+          ? activeObjects
+          : [
+              ...activeObjects,
+              ...worldObjects.filter((object) => object.kind === "portal"),
+            ];
+      for (const object of candidates) {
         if (object.kind === "portal" && area?.id === object.id.slice(7))
           continue;
         const candidate = Math.hypot(
@@ -449,9 +550,14 @@ function Scene({
       // A requested desk may be next to a colleague. Preserve the explicit guidance intent within genuine interaction range.
       if (
         config.guidanceTarget?.objectId &&
-        config.guidanceTarget.locationId === area?.id
+        config.guidanceTarget.locationId === area?.id &&
+        (config.guidanceTarget.floor ?? 0) === floor
       ) {
-        const requested = area.objects
+        const requested = getFloorObjects(
+          area.id,
+          floor,
+          config.meetingContactId,
+        )
           .filter((object) => object.id === config.guidanceTarget!.objectId)
           .sort(
             (a, b) =>
@@ -473,13 +579,28 @@ function Scene({
         )
           closest = requested;
       }
+      const walls: Mesh[] = [];
+      scene.traverse((object) => {
+        if (object instanceof Mesh && object.userData.cameraObstacle)
+          walls.push(object);
+      });
+      cameraWalls.current = walls;
       nearby.current = closest;
       onNearby(closest);
     }
     if (input.interactRequested && !config.paused && !config.showcase) {
       input.interactRequested = false;
       const object = nearby.current;
-      if (object?.id.startsWith("travel:")) {
+      if (object?.kind === "elevator") {
+        input.path = [];
+        input.keys.clear();
+        onLiftOpen(
+          config.floor
+            ? config.location
+            : (getLocationAt(current.current.x, current.current.z)?.id ??
+                config.location),
+        );
+      } else if (object?.id.startsWith("travel:")) {
         const destination = locations.find(
           (location) => location.id === object.id.slice(7),
         );
@@ -501,7 +622,7 @@ function Scene({
         input.path = [];
         motion.current.interaction = 1;
         focusObject.current = object;
-        config.onInteract(object.id);
+        config.onInteract(object.id, object.contactId);
         config.onWorldEvent?.({
           type: "interacted",
           objectId: object.id,
@@ -516,7 +637,7 @@ function Scene({
       if (nearby.current)
         nearMarker.current.position.set(
           nearby.current.x,
-          0.073,
+          elevation + 0.073,
           nearby.current.z,
         );
     }
@@ -524,12 +645,12 @@ function Scene({
       focusObject.current = undefined;
     targetPoint.set(
       current.current.x + Math.sin(input.orbit) * 0.55,
-      1.18,
+      elevation + 1.18,
       current.current.z + Math.cos(input.orbit) * 0.55,
     );
     cameraPoint.set(
       current.current.x - Math.sin(input.orbit) * 4.25,
-      1.25 + Math.sin(input.pitch) * 4.25,
+      elevation + 1.25 + Math.sin(input.pitch) * 4.25,
       current.current.z - Math.cos(input.orbit) * 4.25,
     );
     direction.copy(cameraPoint).sub(targetPoint);
@@ -553,11 +674,20 @@ function Scene({
         .copy(targetPoint)
         .addScaledVector(direction, Math.max(1.5, obstruction.distance - 0.18));
     const conversationPerson =
-      focusObject.current?.kind === "npc"
+      focusObject.current?.kind === "npc" &&
+      (!config.conversationContactId ||
+        focusObject.current.contactId === config.conversationContactId)
         ? focusObject.current
         : config.conversationFraming
-          ? getLocationAt(current.current.x, current.current.z)?.objects.find(
-              (object) => object.id === "mentor",
+          ? getFloorObjects(
+              getLocationAt(current.current.x, current.current.z)?.id ??
+                config.location,
+              floor,
+              config.meetingContactId,
+            ).find((object) =>
+              config.conversationContactId
+                ? object.contactId === config.conversationContactId
+                : object.id === "mentor",
             )
           : undefined;
     if (conversationPerson && config.paused) {
@@ -566,16 +696,16 @@ function Scene({
           object.x - current.current.x,
           object.z - current.current.z,
         );
-      targetPoint.set(object.x, 1.51, object.z);
+      targetPoint.set(object.x, elevation + 1.51, object.z);
       cameraPoint.set(
         current.current.x - Math.sin(yaw + 0.22) * 1.7,
-        1.86,
+        elevation + 1.86,
         current.current.z - Math.cos(yaw + 0.22) * 1.7,
       );
     }
     if (config.showcase) {
-      targetPoint.set(0, 0.7, 0);
-      cameraPoint.set(44, 41, 50);
+      targetPoint.set(-4, 25, -8);
+      cameraPoint.set(84, 36, 98);
     }
     camera.position.lerp(
       cameraPoint,
@@ -614,7 +744,11 @@ function Scene({
       controls.current.dragMoved
     )
       return;
-    controls.current.path = findPath(current.current, { x, z });
+    controls.current.path = findPath(
+      current.current,
+      { x, z },
+      getSceneColliders(callbacks.current.location, callbacks.current.floor),
+    );
     controls.current.input = "pointer";
   }, []);
   return (
@@ -624,23 +758,23 @@ function Scene({
         attach="fog"
         args={[
           "#d6e1df",
-          props.showcase ? 145 : 70,
-          props.showcase ? 200 : 155,
+          props.showcase ? 180 : 90,
+          props.showcase ? 300 : 220,
         ]}
       />
       <ambientLight intensity={0.38} />
       <hemisphereLight args={["#dce9f1", "#a7a28f", 0.78]} />
       <directionalLight
-        position={[-25, 38, 18]}
+        position={[-45, 105, 30]}
         intensity={2.25}
         castShadow={props.quality !== "low"}
         shadow-mapSize-width={props.quality === "high" ? 2048 : 1024}
         shadow-mapSize-height={props.quality === "high" ? 2048 : 1024}
-        shadow-camera-left={-42}
-        shadow-camera-right={42}
-        shadow-camera-top={42}
-        shadow-camera-bottom={-42}
-        shadow-camera-far={100}
+        shadow-camera-left={-68}
+        shadow-camera-right={68}
+        shadow-camera-top={80}
+        shadow-camera-bottom={-68}
+        shadow-camera-far={230}
         shadow-bias={-0.0007}
         shadow-normalBias={0.045}
         shadow-radius={3}
@@ -654,6 +788,11 @@ function Scene({
         onGroundClick={navigate}
         position={current}
         showcase={props.showcase}
+        floor={props.floor}
+        locationId={props.location}
+        quality={props.quality}
+        reducedMotion={props.reducedMotion}
+        meetingContactId={props.meetingContactId}
       />
       <group ref={player}>
         <AvatarModel
@@ -711,8 +850,12 @@ export default function World(props: WorldProps) {
     cameraAngle: 0,
   });
   const [nearby, setNearby] = useState<WorldObject | undefined>();
+  const [directory, setDirectory] = useState<string>();
+  const directoryPanel = useRef<HTMLElement>(null);
+  const [area, setArea] = useState<string | undefined>(props.location);
   const state = useRef(props);
-  state.current = props;
+  state.current = { ...props, paused: props.paused || Boolean(directory) };
+  const sceneProps = { ...props, paused: props.paused || Boolean(directory) };
   useEffect(() => {
     const input = controls.current;
     const down = (event: KeyboardEvent) => {
@@ -768,6 +911,41 @@ export default function World(props: WorldProps) {
       document.removeEventListener("visibilitychange", visibility);
     };
   }, []);
+  useEffect(() => {
+    if (!directory) return;
+    const close = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.stopImmediatePropagation();
+        setDirectory(undefined);
+      } else if (event.key === "Tab") {
+        const buttons =
+          directoryPanel.current?.querySelectorAll<HTMLButtonElement>(
+            "button:not([disabled])",
+          );
+        const first = buttons?.[0],
+          last = buttons?.[buttons.length - 1];
+        if (!first || !last) return;
+        if (
+          !directoryPanel.current?.contains(document.activeElement) ||
+          (event.shiftKey && document.activeElement === first)
+        ) {
+          event.preventDefault();
+          (event.shiftKey ? last : first).focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    window.addEventListener("keydown", close, true);
+    return () => window.removeEventListener("keydown", close, true);
+  }, [directory]);
+  useEffect(() => {
+    setDirectory(undefined);
+  }, [props.location, props.floor, props.positionRevision]);
+  useEffect(() => {
+    if (props.paused) setDirectory(undefined);
+  }, [props.paused]);
   const nearbyUpdate = useCallback(
     (object: WorldObject | undefined) =>
       setNearby((previous) =>
@@ -799,9 +977,11 @@ export default function World(props: WorldProps) {
   });
   return (
     <div
-      className={`am-world ${props.paused ? "is-paused" : ""}`}
+      className={`am-world ${props.paused ? "is-paused" : ""} ${directory ? "has-directory" : ""}`}
       data-testid="world"
       data-guidance-target={props.guidanceTarget?.objectId ?? ""}
+      data-current-floor={props.floor ?? 0}
+      data-current-building={area ?? "street"}
       onContextMenu={(event) => event.preventDefault()}
       onPointerDown={(event) => {
         if (
@@ -860,7 +1040,7 @@ export default function World(props: WorldProps) {
                 : [1, 1.6]
           }
           gl={{ antialias: true, alpha: false, powerPreference: "default" }}
-          camera={{ fov: 52, near: 0.08, far: 200 }}
+          camera={{ fov: 56, near: 0.08, far: 340 }}
           fallback={
             <div className="world-graphics-fallback">
               Your browser cannot open the 3D view. Use the accessible
@@ -872,7 +1052,13 @@ export default function World(props: WorldProps) {
             gl.toneMappingExposure = 1.05;
           }}
         >
-          <Scene props={props} controls={controls} onNearby={nearbyUpdate} />
+          <Scene
+            props={sceneProps}
+            controls={controls}
+            onNearby={nearbyUpdate}
+            onLiftOpen={setDirectory}
+            onAreaChange={setArea}
+          />
         </Canvas>
       </GraphicsBoundary>
       {!props.showcase && (
@@ -907,7 +1093,7 @@ export default function World(props: WorldProps) {
           </button>
         </div>
       )}
-      {nearby && !props.paused && !props.showcase && (
+      {nearby && !props.paused && !directory && !props.showcase && (
         <button
           className="world-interact"
           onClick={() => {
@@ -924,6 +1110,96 @@ export default function World(props: WorldProps) {
           </span>
           <span aria-hidden="true">↗</span>
         </button>
+      )}
+      {!props.showcase &&
+        !props.paused &&
+        area &&
+        props.onFloorChange &&
+        !directory && (
+          <button
+            className="world-elevator"
+            data-testid="world-elevator"
+            onClick={() => {
+              controls.current.keys.clear();
+              controls.current.path = [];
+              setDirectory(area);
+            }}
+          >
+            <span aria-hidden="true">↕</span>{" "}
+            {props.floor
+              ? `Level ${String((props.floor ?? 0) + 1).padStart(2, "0")}`
+              : "Ground floor"}{" "}
+            · Lift directory
+          </button>
+        )}
+      {directory && !props.showcase && (
+        <section
+          className="world-floor-directory"
+          ref={directoryPanel}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Lift directory"
+          data-testid="floor-directory"
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <header>
+            <div>
+              <small>BUILDING DIRECTORY</small>
+              <h2>
+                {locations.find((location) => location.id === directory)?.name}
+              </h2>
+              <p>
+                Every floor is furnished and walkable. Lift travel does not
+                advance the business clock.
+              </p>
+            </div>
+            <button
+              autoFocus
+              aria-label="Close lift directory"
+              onClick={() => setDirectory(undefined)}
+            >
+              ×
+            </button>
+          </header>
+          <div className="world-floor-options">
+            {getBuildingFloors(directory).map((level) => (
+              <button
+                key={level.index}
+                data-testid={`floor-${level.index}`}
+                aria-current={
+                  directory === area && level.index === (props.floor ?? 0)
+                    ? "true"
+                    : undefined
+                }
+                onClick={() => {
+                  props.onFloorChange?.(directory, level.index);
+                  setDirectory(undefined);
+                }}
+              >
+                <strong>
+                  {level.index ? String(level.index + 1).padStart(2, "0") : "G"}
+                </strong>
+                <span>
+                  {level.name}
+                  <small>
+                    {level.theme === "lounge"
+                      ? "Conversation & reflection"
+                      : level.theme === "library"
+                        ? "Sources & evidence"
+                        : level.theme === "conference"
+                          ? "Meetings & planning"
+                          : "Work & learning"}
+                  </small>
+                </span>
+                <span aria-hidden="true">↗</span>
+              </button>
+            ))}
+          </div>
+          <footer>
+            Esc closes · R recovers on the current floor · Ground returns to the
+            street
+          </footer>
+        </section>
       )}
       {props.paused && !props.showcase && (
         <div className="world-paused-indicator">

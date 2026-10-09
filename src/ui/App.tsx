@@ -7,7 +7,13 @@ import {
   useState,
 } from "react";
 import { content } from "../content";
-import { createState, transition, activeStep } from "../engine";
+import {
+  createState,
+  transition,
+  activeStep,
+  readCityNavigation,
+  cafeMeetingContactId,
+} from "../engine";
 import {
   loadState,
   saveState,
@@ -16,7 +22,13 @@ import {
 } from "../engine/persistence";
 import { formatTime } from "../engine/time";
 import type { GameAction, GameState } from "../engine/types";
-import { getLocationAt, locations } from "../world/locations";
+import {
+  getLocationAt,
+  locations,
+  getFloorArrival,
+  getBuildingFloors,
+  normalizeFloor,
+} from "../world/locations";
 import { safePosition } from "../world/collision";
 import type { Dispatch, SetStateAction } from "react";
 import Workbench, { type Panel } from "./Workbench";
@@ -55,7 +67,8 @@ function canRender() {
   }
 }
 function safeScene(state: GameState): GameState {
-  const position = safePosition(state.position, state.location);
+  const floor = normalizeFloor(state.location, readCityNavigation(state).floor);
+  const position = safePosition(state.position, state.location, floor);
   if (
     Math.hypot(position.x - state.position.x, position.z - state.position.z) <
     0.01
@@ -99,6 +112,7 @@ export default function App() {
     label?: string;
     requestId: number;
   }>();
+  const [contactId, setContactId] = useState<string>();
   const [cameraReframe, setCameraReframe] = useState(0);
   const [requestedGuideLocation, setRequestedGuideLocation] =
     useState<string>();
@@ -111,10 +125,19 @@ export default function App() {
     history.replaceState(null, "", `#${value}`);
   }, []);
   const close = useCallback(() => {
+    if (panel === "conversation" && contactId) {
+      setState((current) =>
+        transition(
+          current,
+          { type: "CLOSE_CONVERSATION", npcId: contactId },
+          content,
+        ),
+      );
+    }
     setPanel(null);
     history.replaceState(null, "", "#world");
     document.getElementById("world-shell")?.focus();
-  }, []);
+  }, [panel, contactId]);
   const dispatch = useCallback(
     (action: GameAction) =>
       setState((s) => {
@@ -220,7 +243,16 @@ export default function App() {
     return () => window.removeEventListener("keydown", key);
   }, [entered, open, close, panel]);
   const interaction = useCallback(
-    (id: string) => {
+    (id: string, npcId?: string) => {
+      const personId =
+        npcId || (id.startsWith("npc:") ? id.slice(4) : undefined);
+      const guidedMentor =
+        id === "mentor" && stateRef.current.tutorial.status === "active";
+      if (personId && !guidedMentor) {
+        setContactId(personId);
+        open("conversation");
+        return;
+      }
       if (id.startsWith("travel:")) {
         setPositionRevision((revision) => revision + 1);
         dispatch({ type: "TRAVEL", location: id.slice(7) });
@@ -240,11 +272,17 @@ export default function App() {
         academy: "academy",
         knowledge: "knowledge",
         reconciliation: "reconciliation",
+        tasks: "tasks",
+        issues: "issues",
       };
       open(target[id] || "mission");
     },
     [dispatch, open],
   );
+  const selectContact = (id: string) => {
+    setContactId(id || undefined);
+    open("conversation");
+  };
   const stage = activeStep(state, content),
     mission = content.missions.find((m) => m.id === state.activeMissionId);
   const firstDay = tutorialObjective(state, content);
@@ -273,15 +311,51 @@ export default function App() {
     : caseGuide && state.missions[mission!.id]?.mode === "guided"
       ? { locationId: caseGuide.locationId, label: caseGuide.interact }
       : undefined;
+  const cityNavigation = readCityNavigation(state);
+  const floor =
+    cityNavigation.location === state.location
+      ? normalizeFloor(state.location, cityNavigation.floor)
+      : 0;
+  const currentFloor = getBuildingFloors(state.location)[floor];
+  const changeFloor = (locationId: string, floorIndex: number) => {
+    const destinationFloor = normalizeFloor(locationId, floorIndex);
+    setPositionRevision((revision) => revision + 1);
+    setState((s) => {
+      const arrived =
+        s.location === locationId
+          ? s
+          : transition(s, { type: "TRAVEL", location: locationId }, content);
+      const next = transition(
+        arrived,
+        { type: "SET_FLOOR", location: locationId, floor: destinationFloor },
+        content,
+      );
+      return next.location === locationId &&
+        readCityNavigation(next).floor === destinationFloor
+        ? { ...next, position: getFloorArrival(locationId, destinationFloor) }
+        : next;
+    });
+    close();
+  };
   const location = getLocationAt(state.position.x, state.position.z) || {
     name: "Founders Square",
   };
   const go = (id: string) => {
     setPositionRevision((revision) => revision + 1);
     setState((s) => {
-      const next = transition(s, { type: "TRAVEL", location: id }, content);
+      const traveled = transition(s, { type: "TRAVEL", location: id }, content);
+      const next =
+        traveled.location === id
+          ? transition(
+              traveled,
+              { type: "SET_FLOOR", location: id, floor: 0 },
+              content,
+            )
+          : traveled;
       const destination = locations.find((l) => l.id === id);
-      return destination && next.location === id
+      return destination &&
+        next.location === id &&
+        readCityNavigation(next).floor === 0
         ? {
             ...next,
             position: {
@@ -338,6 +412,7 @@ export default function App() {
       open("map");
       return;
     }
+    if (floor > 0) changeFloor(destination.locationId, 0);
     setNavigation({ ...destination, requestId: Date.now() });
     setPaused(false);
     close();
@@ -461,6 +536,8 @@ export default function App() {
         tabIndex={-1}
         className="world-shell"
         data-position={`${state.position.x.toFixed(2)},${state.position.z.toFixed(2)},${state.position.yaw.toFixed(2)}`}
+        data-floor={floor}
+        data-building={state.location}
         data-clock={state.clockMinutes}
         data-tutorial-step={firstDay?.id || state.tutorial.status}
       >
@@ -483,6 +560,12 @@ export default function App() {
               showcase={!entered}
               paused={!entered || !!panel || paused}
               location={state.location}
+              floor={floor}
+              meetingContactId={cafeMeetingContactId(state)}
+              onFloorChange={changeFloor}
+              conversationContactId={
+                panel === "conversation" ? contactId : undefined
+              }
               position={state.position}
               positionRevision={positionRevision}
               avatar={state.avatar}
@@ -502,6 +585,9 @@ export default function App() {
               }
               onInteract={interaction}
               onTravel={(id) => dispatch({ type: "TRAVEL", location: id })}
+              onAreaEnter={(id) =>
+                dispatch({ type: "ENTER_LOCATION", location: id })
+              }
               onPosition={(position) =>
                 dispatch({ type: "POSITION", ...position })
               }
@@ -555,13 +641,14 @@ export default function App() {
                 <em>Deliver the outcome.</em>
               </h1>
               <p className="welcome-description">
-                You are an account manager learning to understand customers,
-                coordinate the right people, and keep promises. Morgan Vale will
-                guide your first complete work cycle.
+                A city of people, promises and decisions. Explore corporate
+                towers, meet customers over coffee, and discover how every
+                conversation can change the relationship. Your working day is
+                yours.
               </p>
               <div className="welcome-chips">
-                <span>↗ Walkable 3D district</span>
-                <span>◷ Your pace. Your progress.</span>
+                <span>↗ Towers with walkable interiors</span>
+                <span>◷ Conversations with consequences</span>
                 <span>✓ Fully authored. No AI fees.</span>
               </div>
               <label className="name-label">
@@ -606,9 +693,11 @@ export default function App() {
               </span>
             </div>
             <div className="welcome-world-note">
-              <span className="pill">01 / 08</span>
-              <strong>Your apartment</strong>
-              <span>Every working day starts with a little preparation.</span>
+              <span className="pill">THE CITY EDITION</span>
+              <strong>More than a day at the office.</strong>
+              <span>
+                Eight addresses. Multiple floors. One relationship at a time.
+              </span>
             </div>
           </div>
         )}
@@ -619,6 +708,11 @@ export default function App() {
               <div>
                 <small>YOU ARE HERE</small>
                 <strong>{location.name}</strong>
+                {floor > 0 && (
+                  <small>
+                    Floor {floor + 1} · {currentFloor?.name}
+                  </small>
+                )}
               </div>
               <button
                 aria-label="Open district map"
@@ -627,14 +721,30 @@ export default function App() {
                 ↗
               </button>
             </div>
-            <ObjectivePanel
-              key={`${firstDay?.id || stage?.id || "idle"}`}
-              state={state}
-              dispatch={dispatch}
-              open={open}
-              showWhere={showWhere}
-              reframe={reframe}
-            />
+            {firstDay || stage ? (
+              <ObjectivePanel
+                key={`${firstDay?.id || stage?.id || "idle"}`}
+                state={state}
+                dispatch={dispatch}
+                open={open}
+                showWhere={showWhere}
+                reframe={reframe}
+              />
+            ) : (
+              <div className="district-prompt">
+                <span className="eyebrow">YOUR CITY. YOUR WORKING DAY.</span>
+                <strong>What will you do next?</strong>
+                <button onClick={() => open("missions")}>Find a case →</button>
+                <button
+                  onClick={() => {
+                    setContactId(undefined);
+                    open("conversation");
+                  }}
+                >
+                  Start a conversation →
+                </button>
+              </div>
+            )}
             <div className="world-controls">
               <span>
                 <kbd>W A S D</kbd> move
@@ -661,7 +771,7 @@ export default function App() {
                   "map",
                   "inbox",
                   "calendar",
-                  "accounts",
+                  "people",
                   "knowledge",
                   "journal",
                 ] as Panel[]
@@ -720,6 +830,10 @@ export default function App() {
               }) as Dispatch<SetStateAction<GameState>>
             }
             go={go}
+            floor={floor}
+            changeFloor={changeFloor}
+            contactId={contactId}
+            selectContact={selectContact}
             profiles={profiles}
             changeProfile={changeProfile}
             newProfile={newProfile}
@@ -772,6 +886,7 @@ function locationHash(): Panel | null {
   const hash = window.location.hash.slice(1);
   return [
     "guidance",
+    "conversation",
     "missions",
     "mission",
     "map",

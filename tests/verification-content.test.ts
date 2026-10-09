@@ -62,7 +62,7 @@ describe("authored returned evidence", () => {
     expect(record.residualWork.action).toContain("Lena");
   });
   it("marks only genuinely added response facts as changed mission versions", () => {
-    expect(content.version).toBe("twaw-2026.10.03-v2");
+    expect(content.version).toBe("twaw-2026.10.09-branches-v1");
     const changed = content.missions.filter(
       (mission) => getVerificationRecord(mission.id)?.altersCaseFacts,
     );

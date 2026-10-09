@@ -4,7 +4,7 @@
 
 **Unofficial training prototype. Not endorsed by Taxwire. Fictional customers. Educational simulation—not tax advice.**
 
-A browser-based 3D workplace game with original smooth adult character models, articulated movement, furnished contemporary interiors, eight connected walkable locations, and one deterministic simulation engine shared with an accessible 2D workbench. All work is simulated: no real CRM, email, calendar, tax, bank, payment, analytics, or model service is connected. The office and people are fictional. No employment affiliation, job offer, partnership or official credential is implied.
+A browser-based 3D workplace game with original smooth adult character models, articulated movement, furnished contemporary interiors, a high-rise district with furnished, explorable upper floors, relationship conversations and branching case paths, and one deterministic simulation engine shared with an accessible 2D workbench. All work is simulated: no real CRM, email, calendar, tax, bank, payment, analytics, or model service is connected. The office and people are fictional. No employment affiliation, job offer, partnership or official credential is implied.
 
 ## Play and run locally
 
@@ -24,9 +24,13 @@ npm run test:browser
 
 `npm run dev` starts Vite for development. The command launchers serve the production `dist` build. `.npmrc` keeps package cache project-scoped. Node 24 must be the runtime used by npm and subprocesses; on Windows npm.cmd may select an older node.exe beside itself. Run a compatible npm CLI explicitly with the supported Node when necessary. The release workflow uses Node 24 on a standard GitHub runner.
 
+## City edition
+
+See [CITY_GUIDE.md](CITY_GUIDE.md) for the tower floors, lifts, contact conversations, café invitations and choice-dependent case routes. All eight original ground-floor locations and all 52 original case identifiers are retained. New case attempts use real decision graphs; existing attempts preserve their earlier contract. Every displayed NPC opens that person’s contextual conversation, and the People directory provides the same interactions without requiring 3D travel.
+
 ## Controls and a first session
 
-WASD/arrows move; drag the mouse to rotate the third-person camera; E interacts with a nearby object; click the ground to navigate; R recovers to a safe location. M opens the map, J the journal, P pauses, Esc closes panels/releases capture. Touch movement buttons and menu navigation are available. Typing pauses movement. Low/medium/high graphics, reduced motion, text scaling, sensitivity, mute, and a graphics-failure workbench are available in Settings.
+WASD/arrows move; drag the mouse to rotate the third-person camera; E interacts with a nearby object or person; lift directories change floors; click the ground to navigate; R recovers to a safe arrival on the current floor. M opens the map, J the journal, P pauses, Esc closes panels/releases capture. Touch movement buttons and menu navigation are available. Typing pauses movement. Low/medium/high graphics, reduced motion, text scaling, sensitivity, mute, and a graphics-failure workbench are available in Settings.
 
 Choose **Start your guided first day** on a fresh profile. Morgan Vale introduces one control at a time, the headquarters workstation, a small Cedarline discovery request, a simulated appointment, two useful customer facts, a retained preparation note, a bounded update, an owned follow-up and a later response. Verify what the response actually establishes and retain missing evidence as owned work. The 10-15 minute target is learner paced, with no countdown. Then apply discovery in `M-A02`, continue through the handoff and mixed relationship/tax lessons, and taper assistance through Bootcamp. Returning profiles use **Continue your day** with an objective recap; existing learners can opt into or replay guidance without resetting cases. Free exploration and all unlocked cases remain available.
 

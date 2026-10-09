@@ -103,6 +103,28 @@ export interface Step {
   modelAnswer?: string;
   requiresEvidence?: string[];
 }
+export type BranchOutcome = "good" | "mixed" | "poor" | "recovery";
+export interface BranchRoute {
+  fromStepId: string;
+  choiceId: string;
+  nextStepId?: string;
+  ending?: BranchOutcome;
+  mark?: "mixed" | "recovery";
+  label: string;
+  verifiesTasks?: boolean;
+}
+export interface BranchEnding {
+  title: string;
+  summary: string;
+  nextStep: string;
+}
+export interface MissionBranching {
+  version: 1;
+  startStepId: string;
+  nodes: Step[];
+  routes: BranchRoute[];
+  endings: Record<BranchOutcome, BranchEnding>;
+}
 export interface Mission {
   id: string;
   version: number;
@@ -118,6 +140,7 @@ export interface Mission {
   steps: Step[];
   consequence: string;
   output: string;
+  branching?: MissionBranching;
 }
 export interface ContentPack {
   version: string;
